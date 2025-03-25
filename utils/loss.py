@@ -145,45 +145,24 @@ class Point_Matching_Loss(nn.Module):
 
         return keypoints
     
-    def pix2world(self, locations, pos_tran):
-        B, N, _ = locations.shape
-        ones = torch.ones(B, N, 1, device=locations.device)  # 创建 (B, num_keypoints, 1) 的 1
-        locations_homogeneous = torch.cat([locations, ones], dim=-1)  # (B, num_keypoints, 3)
-        transformed_homogeneous = torch.bmm(pos_tran, locations_homogeneous.transpose(1, 2))  # (B, 3, num_keypoints)
-        world_coordinates = (transformed_homogeneous[:, :2, :] / transformed_homogeneous[:, 2:3, :]).transpose(1, 2)  # (B, num_keypoints, 2)
+    def pix2world(self, locations, resolution=0.25):
+        
+        world_coordinates = locations*resolution
 
         return world_coordinates
     
-    def point_match(self,ps, ds, dd, ss, sd):
-        wi=0
-        return wi
-    
-    def pose_estimation(self, ps, pd, w):
-        t=0
-        return t
-    
-    def forward(self,  locations_map1, scores_map1, descriptors_map1,locations_map2, scores_map2, descriptors_map2,pos_trans):
+    def point_match(self,  locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2,):
 
         B, C, H, W = descriptors_map1.shape#(B,1,H,W)
         T=0.1
-        epsilon = 1e-6
+        
         X = torch.stack(torch.meshgrid(torch.arange(H), torch.arange(W), indexing='ij'), dim=-1)#(B,2,H,W)
 
         ps = self.spatial_softmax_keypoints(locations_map1)#(B,num_keypoints,2)
         ds = self.extract_keypoint_descriptors(descriptors_map1,ps)#(B,num_keypoints,C)
         _,num_keypoints,_ = ds.shape
 
-        # ds_extend = ds.unsqueeze(3).unsqueeze(4)  # (B, num_keypoints, feature_dim, 1)
-        # descriptors_map2_extend = descriptors_map2.unsqueeze(1)
-
-        # descriptors_map2_flat = descriptors_map2.view(B, 248, -1)  # (12,248,448*448)
-
-        # 执行批量矩阵乘法：(12,400,248) × (12,248,200704) → (12,400,200704)
         ci = torch.matmul(ds, descriptors_map2.view(B,C,-1))
-
-        # ci = torch.einsum('bik,bjkhw->bijhw', ds, descriptors_map2)
-        # ci = torch.matmul(ds_extend, descriptors_map2_extend)
-        # ci=((ds.unsqueeze(3).unsqueeze(4))*(descriptors_map2.unsqueeze(1))).sum(dim=2)#(B,num_keypoints,H,W)
         S = F.softmax(ci/T, dim=-1).view(B,num_keypoints,H,W)#(B,num_keypoints,H,W)
         pd = self.soft_argmax(S)#(B,num_keypoints,2)
         dd = self.extract_keypoint_descriptors(descriptors_map2,pd)#(B,num_keypoints,C)
@@ -191,10 +170,12 @@ class Point_Matching_Loss(nn.Module):
         sd = self.bilinear_sample(scores_map2,ps)#(B, num_keypoints, 1)
         w = (((ds*dd).sum(dim=-1).unsqueeze(-1)+1)*(ss*sd))/2#(B, num_keypoints, 1)
 
-        # Qs,Qd= self.pix2world(ps,pos_trans),self.pix2world(pd,pos_trans)# (B, num_keypoints, 2)
-        Qs= self.pix2world(ps,pos_trans)# (B, num_keypoints, 2)
-        Qs= ps# (B, num_keypoints, 2)
-        Qd = pd
+        return ps, pd, w
+    
+    def pose_estimation(self, ps, pd, w):
+        
+        epsilon = 1e-6
+        Qs,Qd= self.pix2world(ps),self.pix2world(pd)# (B, num_keypoints, 2)
         Qs_avg=torch.sum(w * Qs, dim=1) / (torch.sum(w, dim=1)+epsilon)#(B,2)
         Qd_avg=torch.sum(w * Qd, dim=1) / (torch.sum(w, dim=1)+epsilon)#(B,2)
         xi=Qs-Qs_avg[:, None, :]# (B, num_keypoints, 2)
@@ -207,6 +188,45 @@ class Point_Matching_Loss(nn.Module):
         d[:, -1, -1] = det_sign.squeeze()
         R = V_T @ d @ U.transpose(-2, -1)# (B, 2, 2)
         t = Qd_avg - (R @ Qs_avg.unsqueeze(-1)).squeeze(-1) # (B, 2)
+
+        return t,R
+    
+    def forward(self,  locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2,pos_trans):
+
+        # B, C, H, W = descriptors_map1.shape#(B,1,H,W)
+        # T=0.1
+        # epsilon = 1e-6
+        # X = torch.stack(torch.meshgrid(torch.arange(H), torch.arange(W), indexing='ij'), dim=-1)#(B,2,H,W)
+
+        # ps = self.spatial_softmax_keypoints(locations_map1)#(B,num_keypoints,2)
+        # ds = self.extract_keypoint_descriptors(descriptors_map1,ps)#(B,num_keypoints,C)
+        # _,num_keypoints,_ = ds.shape
+
+        # ci = torch.matmul(ds, descriptors_map2.view(B,C,-1))
+        # S = F.softmax(ci/T, dim=-1).view(B,num_keypoints,H,W)#(B,num_keypoints,H,W)
+        # pd = self.soft_argmax(S)#(B,num_keypoints,2)
+        # dd = self.extract_keypoint_descriptors(descriptors_map2,pd)#(B,num_keypoints,C)
+        # ss = self.bilinear_sample(scores_map1,pd)#(B, num_keypoints, 1)
+        # sd = self.bilinear_sample(scores_map2,ps)#(B, num_keypoints, 1)
+        # w = (((ds*dd).sum(dim=-1).unsqueeze(-1)+1)*(ss*sd))/2#(B, num_keypoints, 1)
+
+        ps, pd, w = self.point_match(locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2)
+
+        t,R = self.pose_estimation(ps, pd, w)
+
+        # Qs,Qd= self.pix2world(ps),self.pix2world(pd)# (B, num_keypoints, 2)
+        # Qs_avg=torch.sum(w * Qs, dim=1) / (torch.sum(w, dim=1)+epsilon)#(B,2)
+        # Qd_avg=torch.sum(w * Qd, dim=1) / (torch.sum(w, dim=1)+epsilon)#(B,2)
+        # xi=Qs-Qs_avg[:, None, :]# (B, num_keypoints, 2)
+        # yi=Qd-Qd_avg[:, None, :]# (B, num_keypoints, 2)
+        # S = xi.transpose(1, 2) @ (w * yi) # (B, 2, 2)
+        # U, Sigma, V_T = torch.svd(S)  # U=(B,2,2),Sigma=Σ=(B,2),V=(B,2,2)
+
+        # det_sign = torch.det(V_T @ U.transpose(-2, -1)).unsqueeze(-1).unsqueeze(-1) 
+        # d = torch.eye(2, device=S.device).unsqueeze(0).repeat(S.shape[0], 1, 1)  # (B, 2, 2)
+        # d[:, -1, -1] = det_sign.squeeze()
+        # R = V_T @ d @ U.transpose(-2, -1)# (B, 2, 2)
+        # t = Qd_avg - (R @ Qs_avg.unsqueeze(-1)).squeeze(-1) # (B, 2)
         t_real = pos_trans[:, :2, 2] # (B,2)
         R_real = pos_trans[:, :2, :2] # (B,2,2)
 
