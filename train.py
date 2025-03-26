@@ -54,7 +54,7 @@ def main():
     val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=4, drop_last=False)
 
     # TensorBoard
-    writer = SummaryWriter(log_dir=os.path.join(args.model_save_path, 'logs'))
+    writer = SummaryWriter(log_dir=args.logs_path)
 
     #train
     for epoch in range(args.total_epoch):
