@@ -2,6 +2,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from scipy.optimize import linear_sum_assignment
+from joblib import Parallel, delayed  # 并行处理
 # torch.cuda.set_per_process_memory_fraction(0.5)
 
 class Point_Matching_Loss(nn.Module):
@@ -170,7 +172,7 @@ class Point_Matching_Loss(nn.Module):
         sd = self.bilinear_sample(scores_map2,ps)#(B, num_keypoints, 1)
         w = (((ds*dd).sum(dim=-1).unsqueeze(-1)+1)*(ss*sd))/2#(B, num_keypoints, 1)
 
-        return ps, pd, w
+        return ps, pd, ds, dd, ss, sd, w
     
     def pose_estimation(self, ps, pd, w):
         
@@ -191,6 +193,73 @@ class Point_Matching_Loss(nn.Module):
 
         return t,R
     
+    def hungarian_match(self, cost_matrix, ps_i, pd_i):
+        row_ind, col_ind = linear_sum_assignment(cost_matrix)  # 匈牙利算法
+        return ps_i[row_ind], pd_i[col_ind]  # 匹配后的坐标
+
+    def eval(self,locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2,threshold=0.5):
+        
+        """
+        ds, dd: 描述子 (B, numkeypoints, 248)
+        ss, sd: 置信度得分 (B, numkeypoints, 1)
+        ps, pd: 关键点坐标 (B, numkeypoints, 2)
+        threshold: 置信度阈值
+        返回：
+        每个 batch 独立返回 (matched_ps, matched_pd)，如果无匹配则返回空张量
+        """
+
+        ps, pd, ds, dd, ss, sd, _ = self.point_match(locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2)
+        
+        B, numkeypoints, _ = ds.shape
+        results = []
+
+        for i in range(B):  # 逐 batch 处理
+            # 归一化描述子
+            ds_norm = F.normalize(ds[i], p=2, dim=-1)  # (numkeypoints, 248)
+            dd_norm = F.normalize(dd[i], p=2, dim=-1)  # (numkeypoints, 248)
+
+            # 计算余弦相似度矩阵
+            similarity = torch.mm(ds_norm, dd_norm.T)  # (numkeypoints, numkeypoints)
+
+            # 计算置信度加权
+            ss_i = ss[i].squeeze(-1)  # (numkeypoints,)
+            sd_i = sd[i].squeeze(-1)  # (numkeypoints,)
+            confidence_weight = ss_i.view(-1, 1) * sd_i.view(1, -1)  # (numkeypoints, numkeypoints)
+            weighted_score = similarity * confidence_weight  # (numkeypoints, numkeypoints)
+
+            # 计算匹配成本矩阵（匈牙利算法要求最小化，因此取负值）
+            cost_matrix = -weighted_score.cpu().numpy()
+
+            # 进行匈牙利匹配
+            row_ind, col_ind = linear_sum_assignment(cost_matrix)
+
+            # 计算最终置信度
+            final_scores = torch.min(ss_i[row_ind], sd_i[col_ind])  # (num_matches,)
+
+            # 仅保留高置信度的匹配点
+            mask = final_scores >= threshold
+            if mask.sum() > 0:
+                matched_ps = ps[i][row_ind][mask]  # (selected_matches, 2)
+                matched_pd = pd[i][col_ind][mask]  # (selected_matches, 2)
+            else:
+                matched_ps = torch.empty(0, 2)  # 空匹配
+                matched_pd = torch.empty(0, 2)
+
+            results.append((matched_ps, matched_pd))
+
+        return results  
+
+        # confidence = ss.unsqueeze(2) * sd.unsqueeze(1)
+        # match_scores = cosine_similarity * confidence.mean(dim=-1)
+        # best_match_scores, best_matches = torch.topk(match_scores, k=top_k, dim=-1)
+        # valid_mask = best_match_scores > threshold
+        # best_matches = torch.where(valid_mask, best_matches, torch.full_like(best_matches, -1))
+        # matched_ps = ps.unsqueeze(2).expand(-1, -1, top_k, -1)
+        # matched_pd = torch.gather(pd.unsqueeze(1).expand(-1, numkeypoints, -1, -1), 2, best_matches.unsqueeze(-1).expand(-1, -1, -1, 2))
+
+
+        # return best_matches, best_match_scores
+
     def forward(self,  locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2,pos_trans):
 
         # B, C, H, W = descriptors_map1.shape#(B,1,H,W)
@@ -210,7 +279,7 @@ class Point_Matching_Loss(nn.Module):
         # sd = self.bilinear_sample(scores_map2,ps)#(B, num_keypoints, 1)
         # w = (((ds*dd).sum(dim=-1).unsqueeze(-1)+1)*(ss*sd))/2#(B, num_keypoints, 1)
 
-        ps, pd, w = self.point_match(locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2)
+        ps, pd,_,_,_,_, w = self.point_match(locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2)
 
         t,R = self.pose_estimation(ps, pd, w)
 
