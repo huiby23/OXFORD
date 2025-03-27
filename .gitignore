@@ -2,3 +2,4 @@ data/
 robotcar_dataset_sdk/
 logs/
 check_points
+results/val

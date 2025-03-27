@@ -13,53 +13,131 @@ class Point_Matching_Loss(nn.Module):
         super().__init__()
         self.alpha = alpha
 
+    # def spatial_softmax_keypoints(self, locations, num_keypoints=400):
+    #     """
+    #     Compute sub-pixel keypoint locations using spatial softmax.
+
+    #     Args:
+    #         locations (torch.Tensor): Input tensor of shape (B, 1, H, W), where B is batch size,
+    #                                 H and W are the height and width of the feature map.
+    #         num_keypoints (int): Number of keypoints to predict.
+
+    #     Returns:
+    #         keypoints (torch.Tensor): Sub-pixel keypoint locations of shape (B, num_keypoints, 2).
+    #     """
+    #     B, _, H, W = locations.shape
+    #     locations = locations.squeeze(1)  # (B, H, W)
+
+    #     # 计算 cell 大小，使得所有 keypoints 均匀分布
+    #     cell_size = int((H * W) ** 0.5 / num_keypoints ** 0.5)  
+    #     grid_h, grid_w = H // cell_size, W // cell_size  # 划分成 grid_h × grid_w 个 cell
+    #     num_keypoints = grid_h * grid_w  # 可能与输入 `num_keypoints` 不符，但保证划分均匀
+
+    #     # 使用 unfold 切分窗口，形状变为 (B, grid_h, grid_w, cell_size, cell_size)
+    #     patches = locations.unfold(1, cell_size, cell_size).unfold(2, cell_size, cell_size)
+    #     patches = patches.contiguous().view(B, grid_h * grid_w, -1)  # (B, num_keypoints, cell_size²)
+
+    #     # spatial softmax
+    #     softmaxed = F.softmax(patches, dim=-1)  # (B, num_keypoints, cell_size²)
+
+    #     # 预先计算网格坐标 (不需要 for 循环)
+    #     y_indices, x_indices = torch.meshgrid(
+    #         torch.linspace(0, cell_size - 1, cell_size),
+    #         torch.linspace(0, cell_size - 1, cell_size),
+    #         indexing="ij"
+    #     )  # (cell_size, cell_size)
+    #     coords = torch.stack([x_indices.flatten(), y_indices.flatten()], dim=-1).to(softmaxed.device) # (cell_size², 2)
+
+    #     # 计算 keypoints 坐标 (B, num_keypoints, 2)
+    #     keypoints = torch.einsum('bnd,dc->bnc', softmaxed, coords)
+
+    #     # 将 keypoints 变换到全局坐标
+    #     grid_x = torch.arange(grid_w, device=locations.device) * cell_size
+    #     grid_y = torch.arange(grid_h, device=locations.device) * cell_size
+    #     grid_x, grid_y = torch.meshgrid(grid_x, grid_y, indexing="ij")
+    #     grid_offsets = torch.stack([grid_x.flatten(), grid_y.flatten()], dim=-1)  # (num_keypoints, 2)
+
+    #     keypoints = keypoints + grid_offsets.unsqueeze(0)  # (B, num_keypoints, 2)
+
+    #     return keypoints
+
+
+
+    # def spatial_softmax_keypoints(self,locations, num_keypoints=400):
+    #     """
+    #     计算空间 Softmax 后的关键点坐标，根据响应值选择前 num_keypoints 个点。
+        
+    #     Args:
+    #         locations (torch.Tensor): 形状为 (B, 1, H, W) 的输入张量。
+    #         num_keypoints (int): 选取的关键点数量。
+
+    #     Returns:
+    #         keypoints (torch.Tensor): 关键点坐标，形状为 (B, num_keypoints, 2)。
+    #     """
+    #     B, _, H, W = locations.shape
+    #     locations = locations.squeeze(1)  # 变为 (B, H, W)
+
+    #     # 计算空间 Softmax
+    #     softmaxed = F.softmax(locations.view(B, -1), dim=-1)  # (B, H*W)
+
+    #     # 获取前 num_keypoints 个最大响应值的索引
+    #     topk_vals, topk_indices = torch.topk(softmaxed, num_keypoints, dim=-1)  # (B, num_keypoints)
+
+    #     # 计算 keypoints 的全局坐标
+    #     y_coords = topk_indices // W  # 行索引
+    #     x_coords = topk_indices % W   # 列索引
+    #     keypoints = torch.stack([x_coords, y_coords], dim=-1).float()  # (B, num_keypoints, 2)
+
+    #     return keypoints
+
     def spatial_softmax_keypoints(self, locations, num_keypoints=400):
         """
-        Compute sub-pixel keypoint locations using spatial softmax.
-
+        Compute keypoints using spatial softmax on a per-cell basis.
+        
         Args:
-            locations (torch.Tensor): Input tensor of shape (B, 1, H, W), where B is batch size,
-                                    H and W are the height and width of the feature map.
+            locations (torch.Tensor): Shape (B, 1, H, W), feature map.
             num_keypoints (int): Number of keypoints to predict.
 
         Returns:
-            keypoints (torch.Tensor): Sub-pixel keypoint locations of shape (B, num_keypoints, 2).
+            keypoints (torch.Tensor): Shape (B, num_keypoints, 2), keypoint coordinates.
         """
         B, _, H, W = locations.shape
         locations = locations.squeeze(1)  # (B, H, W)
 
-        # 计算 cell 大小，使得所有 keypoints 均匀分布
+        # 计算 cell 大小，使得总共生成 num_keypoints 个关键点
         cell_size = int((H * W) ** 0.5 / num_keypoints ** 0.5)  
-        grid_h, grid_w = H // cell_size, W // cell_size  # 划分成 grid_h × grid_w 个 cell
-        num_keypoints = grid_h * grid_w  # 可能与输入 `num_keypoints` 不符，但保证划分均匀
+        grid_h, grid_w = H // cell_size, W // cell_size  # 划分为 grid_h x grid_w 个 cells
+        num_keypoints = grid_h * grid_w  # 可能略微调整，以保证网格均匀
 
-        # 使用 unfold 切分窗口，形状变为 (B, grid_h, grid_w, cell_size, cell_size)
+        # 划分网格，并展平 cell
         patches = locations.unfold(1, cell_size, cell_size).unfold(2, cell_size, cell_size)
-        patches = patches.contiguous().view(B, grid_h * grid_w, -1)  # (B, num_keypoints, cell_size²)
+        patches = patches.contiguous().view(B, num_keypoints, -1)  # (B, num_keypoints, cell_size²)
 
-        # spatial softmax
+        # **在每个 cell 内执行 softmax**
         softmaxed = F.softmax(patches, dim=-1)  # (B, num_keypoints, cell_size²)
 
-        # 预先计算网格坐标 (不需要 for 循环)
-        y_indices, x_indices = torch.meshgrid(
+        # 计算 cell 内的相对坐标
+        y_idx, x_idx = torch.meshgrid(
             torch.linspace(0, cell_size - 1, cell_size),
             torch.linspace(0, cell_size - 1, cell_size),
             indexing="ij"
-        )  # (cell_size, cell_size)
-        coords = torch.stack([x_indices.flatten(), y_indices.flatten()], dim=-1).to(softmaxed.device) # (cell_size², 2)
+        )  # 形状 (cell_size, cell_size)
+        coords = torch.stack([x_idx.flatten(), y_idx.flatten()], dim=-1).to(softmaxed.device)  # (cell_size², 2)
 
-        # 计算 keypoints 坐标 (B, num_keypoints, 2)
-        keypoints = torch.einsum('bnd,dc->bnc', softmaxed, coords)
+        # 计算关键点的相对坐标
+        keypoints = torch.einsum('bnd,dc->bnc', softmaxed, coords)  # (B, num_keypoints, 2)
 
-        # 将 keypoints 变换到全局坐标
+        # 计算 cell 的起始坐标 (全局偏移量)
         grid_x = torch.arange(grid_w, device=locations.device) * cell_size
         grid_y = torch.arange(grid_h, device=locations.device) * cell_size
         grid_x, grid_y = torch.meshgrid(grid_x, grid_y, indexing="ij")
         grid_offsets = torch.stack([grid_x.flatten(), grid_y.flatten()], dim=-1)  # (num_keypoints, 2)
 
+        # **加上 cell 偏移量，得到全局坐标**
         keypoints = keypoints + grid_offsets.unsqueeze(0)  # (B, num_keypoints, 2)
 
         return keypoints
+
     
     def bilinear_sample(self, X, keypoints):
         """
@@ -156,21 +234,31 @@ class Point_Matching_Loss(nn.Module):
     def point_match(self,  locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2,):
 
         B, C, H, W = descriptors_map1.shape#(B,1,H,W)
-        T=0.1
+        T=0.01
         
         X = torch.stack(torch.meshgrid(torch.arange(H), torch.arange(W), indexing='ij'), dim=-1)#(B,2,H,W)
 
         ps = self.spatial_softmax_keypoints(locations_map1)#(B,num_keypoints,2)
         
-
         ds = self.extract_keypoint_descriptors(descriptors_map1,ps)#(B,num_keypoints,C)
         _,num_keypoints,_ = ds.shape
 
         descriptors_map2_normalized = descriptors_map2 / descriptors_map2.norm(p=2, dim=1, keepdim=True)
 
         ci = torch.matmul(ds, descriptors_map2_normalized.view(B,C,-1))
-        S = F.softmax(ci/T, dim=-1).view(B,num_keypoints,H,W)#(B,num_keypoints,H,W)
-        pd = self.soft_argmax(S)#(B,num_keypoints,2)
+        # S = F.softmax(ci/T, dim=-1).view(B,num_keypoints,H,W)#(B,num_keypoints,H,W)
+        # pd = self.soft_argmax(S)#(B,num_keypoints,2)
+
+        S = F.softmax(ci, dim=-1)#(B,num_keypoints,H,W)
+        max_idx = torch.argmax(S, dim=-1)  # (B, num_keypoints)
+
+        # 计算对应的 (y, x) 坐标
+        # y_coords = max_idx // W  # 行索引 (y)
+        y_coords = torch.div(max_idx, W, rounding_mode='trunc')
+        x_coords = max_idx % W   # 列索引 (x)
+
+        pd = torch.stack([x_coords, y_coords], dim=-1).float()
+
         dd = self.extract_keypoint_descriptors(descriptors_map2,pd)#(B,num_keypoints,C)
         ss = self.bilinear_sample(scores_map1,ps)#(B, num_keypoints, 1)
         sd = self.bilinear_sample(scores_map2,pd)#(B, num_keypoints, 1)
@@ -201,7 +289,7 @@ class Point_Matching_Loss(nn.Module):
         row_ind, col_ind = linear_sum_assignment(cost_matrix)  # 匈牙利算法
         return ps_i[row_ind], pd_i[col_ind]  # 匹配后的坐标
 
-    def match(self,locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2,threshold=0.3):
+    def match(self,locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2,threshold=0.1):
         
         """
         ds, dd: 描述子 (B, numkeypoints, 248)
@@ -219,23 +307,34 @@ class Point_Matching_Loss(nn.Module):
         results = []
 
         combined_confidence = ss * sd  # 或者使用加法 ss + sd
+        # threshold = combined_confidence.mean()
     
         # 筛选出综合置信度大于阈值的关键点
-        mask = combined_confidence.squeeze(-1) > threshold
+        # mask = combined_confidence.squeeze(-1) > threshold
 
         for i in range(B):
+            mask = combined_confidence[i].squeeze(-1)
+            # threshold = combined_confidence.mean()
+            threshold = combined_confidence.quantile(0.8)
+            mask_i = mask > threshold
+
             ps_i = ps[i]  # 当前批次的前一帧坐标
             pd_i = pd[i]  # 当前批次的后一帧坐标
-            mask_i = mask[i]
+            # mask_i = mask[i]
 
             results.append([ps_i[mask_i],pd_i[mask_i]])
+<<<<<<< HEAD
         
         return results, t, R
+=======
+            # results.append([ps_i,pd_i])
+        return results
+>>>>>>> 9c333e9283a65b1c98823fdc835095ea9c5600f6
 
         
         # # 根据mask筛选出满足条件的点
-        ps_filtered = ps[mask]
-        pd_filtered = pd[mask]
+        # ps_filtered = ps[mask]
+        # pd_filtered = pd[mask]
         # ps_filtered = ps
         # pd_filtered = pd
         # ss_filtered = ss[mask]
@@ -255,7 +354,7 @@ class Point_Matching_Loss(nn.Module):
 
         #     results.append((matched_ps, matched_pd))
 
-        return ps_filtered,pd_filtered
+        # return ps_filtered,pd_filtered
 
         # confidence = ss.unsqueeze(2) * sd.unsqueeze(1)
         # match_scores = cosine_similarity * confidence.mean(dim=-1)
@@ -270,40 +369,12 @@ class Point_Matching_Loss(nn.Module):
 
     def forward(self,  locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2,pos_trans):
 
-        # B, C, H, W = descriptors_map1.shape#(B,1,H,W)
-        # T=0.1
-        # epsilon = 1e-6
-        # X = torch.stack(torch.meshgrid(torch.arange(H), torch.arange(W), indexing='ij'), dim=-1)#(B,2,H,W)
 
-        # ps = self.spatial_softmax_keypoints(locations_map1)#(B,num_keypoints,2)
-        # ds = self.extract_keypoint_descriptors(descriptors_map1,ps)#(B,num_keypoints,C)
-        # _,num_keypoints,_ = ds.shape
-
-        # ci = torch.matmul(ds, descriptors_map2.view(B,C,-1))
-        # S = F.softmax(ci/T, dim=-1).view(B,num_keypoints,H,W)#(B,num_keypoints,H,W)
-        # pd = self.soft_argmax(S)#(B,num_keypoints,2)
-        # dd = self.extract_keypoint_descriptors(descriptors_map2,pd)#(B,num_keypoints,C)
-        # ss = self.bilinear_sample(scores_map1,pd)#(B, num_keypoints, 1)
-        # sd = self.bilinear_sample(scores_map2,ps)#(B, num_keypoints, 1)
-        # w = (((ds*dd).sum(dim=-1).unsqueeze(-1)+1)*(ss*sd))/2#(B, num_keypoints, 1)
 
         ps, pd,_,_,_,_, w = self.point_match(locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2)
-
+        
         t,R = self.pose_estimation(ps, pd, w)
 
-        # Qs,Qd= self.pix2world(ps),self.pix2world(pd)# (B, num_keypoints, 2)
-        # Qs_avg=torch.sum(w * Qs, dim=1) / (torch.sum(w, dim=1)+epsilon)#(B,2)
-        # Qd_avg=torch.sum(w * Qd, dim=1) / (torch.sum(w, dim=1)+epsilon)#(B,2)
-        # xi=Qs-Qs_avg[:, None, :]# (B, num_keypoints, 2)
-        # yi=Qd-Qd_avg[:, None, :]# (B, num_keypoints, 2)
-        # S = xi.transpose(1, 2) @ (w * yi) # (B, 2, 2)
-        # U, Sigma, V_T = torch.svd(S)  # U=(B,2,2),Sigma=Σ=(B,2),V=(B,2,2)
-
-        # det_sign = torch.det(V_T @ U.transpose(-2, -1)).unsqueeze(-1).unsqueeze(-1) 
-        # d = torch.eye(2, device=S.device).unsqueeze(0).repeat(S.shape[0], 1, 1)  # (B, 2, 2)
-        # d[:, -1, -1] = det_sign.squeeze()
-        # R = V_T @ d @ U.transpose(-2, -1)# (B, 2, 2)
-        # t = Qd_avg - (R @ Qs_avg.unsqueeze(-1)).squeeze(-1) # (B, 2)
         t_real = pos_trans[:, :2, 2] # (B,2)
         R_real = pos_trans[:, :2, :2] # (B,2,2)
 

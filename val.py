@@ -43,6 +43,9 @@ def main():
     val_set = CustomDataset(args.data_path,args.img_sz,mode="test")
     val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=1, drop_last=False)
 
+
+    if not os.path.exists(args.val_save_path):
+        os.makedirs(args.val_save_path)
     #train
     
     model.eval()
@@ -51,7 +54,7 @@ def main():
     est_pose_tran = []
 
     with torch.no_grad():
-        for batch_idx, (im1, im2, imgs_name) in enumerate(tqdm(val_loader, desc=f"inferencing", ncols=100)):
+        for batch_idx, (im1, im2, _,imgs_name) in enumerate(tqdm(val_loader, desc=f"inferencing", ncols=100)):
             im1, im2= im1.to(device), im2.to(device)
             im = torch.cat([im1,im2],dim=0)
             locations_map, scores_map, descriptors_map = model(im)
@@ -79,10 +82,27 @@ def main():
             
 
             for i in range(B):
+
+                loc=locations_map1[i, 0].cpu().numpy()
+                loc = cv2.normalize(loc, None, 0, 255, cv2.NORM_MINMAX)
+                loc = (loc).astype(np.uint8)# 归一化到 0-255 范围
+                loc = cv2.cvtColor(loc, cv2.COLOR_GRAY2BGR)
+                # cv2.imwrite('loc.png', loc)
+
+                scores=scores_map1[i, 0].cpu().numpy()
+                # scores = (scores * 255).astype(np.uint8)  # 归一化到 0-255 范围
+                scores = cv2.normalize(scores, None, 0, 255, cv2.NORM_MINMAX)
+                scores = scores.astype(np.uint8)
+
+                scores = cv2.cvtColor(scores, cv2.COLOR_GRAY2BGR)
+                # cv2.imwrite('scores.png', scores)
+                
                 img_name = imgs_name[i]+'.png'
                 img = im2[i, 0].cpu().numpy()  # 提取单通道图像，并转换为 NumPy
                 img = (img * 255).astype(np.uint8)  # 归一化到 0-255 范围
                 img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)  # 转换为三通道 BGR 图像
+
+                # cv2.imwrite('img.png', img)
                 
                 ps_i = np.array(matched_points[i][0].cpu())  # 提取 matched_ps
                 pd_i = np.array(matched_points[i][1].cpu())  # 提取 matched_pd
@@ -94,6 +114,10 @@ def main():
                     cv2.line(img, (int(x1), int(y1)), (int(x2), int(y2)), (255, 0, 0), 1)  # 连接线 (蓝色)
 
                 save_path = os.path.join(args.val_save_path,img_name)
+
+                combined_image = cv2.hconcat([loc, scores, img])
+                
+                cv2.imwrite('results/combine/{}'.format(img_name), combined_image)
                 cv2.imwrite(save_path, img)
 
             # print(f"val_f1_score: {total_f1_score / total_samples}")
