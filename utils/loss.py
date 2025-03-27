@@ -212,8 +212,9 @@ class Point_Matching_Loss(nn.Module):
         每个 batch 独立返回 (matched_ps, matched_pd)，如果无匹配则返回空张量
         """
 
-        ps, pd, ds, dd, ss, sd, _ = self.point_match(locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2)
-        
+        ps, pd, ds, dd, ss, sd, w = self.point_match(locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2)
+        t, R = self.pose_estimation(ps, pd, w)
+
         B, numkeypoints, _ = ds.shape
         results = []
 
@@ -229,7 +230,7 @@ class Point_Matching_Loss(nn.Module):
 
             results.append([ps_i[mask_i],pd_i[mask_i]])
         
-        return results
+        return results, t, R
 
         
         # # 根据mask筛选出满足条件的点

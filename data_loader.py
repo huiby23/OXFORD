@@ -11,7 +11,7 @@ from torchvision import transforms
 from pathlib import Path
 
 
-class Data_Preprocess():
+class Data_Preprocess_merged():
     def __init__(self, dataset_dir):
         self.dataset_dir = dataset_dir
   
@@ -410,7 +410,7 @@ class Data_Preprocess():
 
 
 
-class CustomDataset(Dataset):
+class OXFORD_Dataset(Dataset):
     def __init__(self, root_dir):
         self.root_dir = root_dir
         self.data_folders = [os.path.join(root_dir, folder) for folder in os.listdir(root_dir) if os.path.isdir(os.path.join(root_dir, folder))]
@@ -461,19 +461,5 @@ if __name__ == "__main__":
 
     print(dataset_path, train_data_path, radar_display_time)
 
-    data_preprocess = Data_Preprocess(dataset_dir = dataset_path)
+    data_preprocess = Data_Preprocess_merged(dataset_dir = dataset_path)
     data_preprocess.run(train_data_path, radar_display_time, cart_width)
-
-    # 加载train_data
-    rat = 0
-    if rat:
-        train_data = CustomDataset(root_dir = './train_data')
-        dataloader = DataLoader(train_data, batch_size = 4, shuffle = True)
-
-
-        # 训练示例
-        for batch in dataloader:
-            image_1_batch, image_2_batch, matrix_batch = batch
-            print(image_1_batch.shape, image_2_batch.shape, matrix_batch.shape)
-            # 模型训练
-            # ......

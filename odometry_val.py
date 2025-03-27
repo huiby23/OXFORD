@@ -32,9 +32,8 @@ class Evaluator():
     def load_poses_from_txt(self, file_name):
         """Load poses from txt (KITTI format)
         Each line in the file should follow one of the following structures
-            (1) idx pose(3x4 matrix in terms of 12 numbers)
-            (2) pose(3x4 matrix in terms of 12 numbers)
-
+            pose(2x3 matrix in terms of 6 numbers)
+        
         Args:
             file_name (str): txt file path
         Returns:
@@ -47,14 +46,17 @@ class Evaluator():
         for cnt, line in enumerate(s):
             P = np.eye(4)
             line_split = [float(i) for i in line.split(" ") if i!=""]
-            withIdx = len(line_split) == 13
-            for row in range(3):
+            
+            # SE2 -> SE3
+            line_split.insert(2, float(0))
+            line_split.insert(6, float(0))
+            
+            # 行优先存储
+            for row in range(2):
                 for col in range(4):
-                    P[row, col] = line_split[row*4 + col + withIdx]
-            if withIdx:
-                frame_idx = line_split[0]
-            else:
-                frame_idx = cnt
+                    P[row, col] = line_split[row*4 + col]
+
+            frame_idx = cnt
             poses[frame_idx] = P
         return poses
 
@@ -389,6 +391,29 @@ class Evaluator():
         rpe_trans = np.mean(np.asarray(trans_errors))
         rpe_rot = np.mean(np.asarray(rot_errors))
         return rpe_trans, rpe_rot
+
+    def scale_optimization(self, gt, pred):
+        """ Optimize scaling factor
+        Args:
+            gt (4x4 array dict): ground-truth poses
+            pred (4x4 array dict): predicted poses
+        Returns:
+            new_pred (4x4 array dict): predicted poses after optimization
+        """
+        pred_updated = copy.deepcopy(pred)
+        xyz_pred = []
+        xyz_ref = []
+        for i in pred:
+            pose_pred = pred[i]
+            pose_ref = gt[i]
+            xyz_pred.append(pose_pred[:3, 3])
+            xyz_ref.append(pose_ref[:3, 3])
+        xyz_pred = np.asarray(xyz_pred)
+        xyz_ref = np.asarray(xyz_ref)
+        scale = scale_lse_solver(xyz_pred, xyz_ref)
+        for i in pred_updated:
+            pred_updated[i][:3, 3] *= scale
+        return pred_updated
     
     def write_result(self, f, seq, errs):
         """Write result into a txt file
@@ -450,8 +475,8 @@ class Evaluator():
             self.cur_seq = '{:02}'.format(i)
             file_name = '{:02}.txt'.format(i)
 
-            poses_result = self.load_poses_from_txt(result_dir+"/"+file_name)
-            poses_gt = self.load_poses_from_txt(self.gt_dir + "/" + file_name)
+            poses_result = self.load_poses_from_list(result_dir+"/"+file_name)
+            poses_gt = self.load_poses_from_list(self.gt_dir + "/" + file_name)
             self.result_file_name = result_dir+file_name
 
             # Pose alignment to first frame

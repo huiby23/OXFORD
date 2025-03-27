@@ -11,6 +11,8 @@ from utils.dataloader import CustomDataset
 from models.UNet import Dual_UNet
 from utils.loss import Point_Matching_Loss
 from tqdm import tqdm
+from data_loader import Data_Preprocess_merged, OXFORD_Dataset
+from odometry_val import Evaluator
 # torch.cuda.set_per_process_memory_fraction(0.5)
 def Args():
     parser = argparse.ArgumentParser(description="settings")
@@ -45,6 +47,9 @@ def main():
     
     model.eval()
 
+    # 根据学习的关键点，预测出的相对位姿变换
+    est_pose_tran = []
+
     with torch.no_grad():
         for batch_idx, (im1, im2, imgs_name) in enumerate(tqdm(val_loader, desc=f"inferencing", ncols=100)):
             im1, im2= im1.to(device), im2.to(device)
@@ -55,8 +60,24 @@ def main():
             B=int(im2.shape[0])
             locations_map1, scores_map1, descriptors_map1 = locations_map[0:B,:,:,:], scores_map[0:B,:,:,:], descriptors_map[0:B,:,:,:]
             locations_map2, scores_map2, descriptors_map2 = locations_map[B:,:,:,:], scores_map[B:,:,:,:], descriptors_map[B:,:,:,:]
-            matched_points = pm_loss.match(locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2,threshold=0.01)
+            matched_points, est_translation, est_rotation = pm_loss.match(locations_map1, scores_map1, descriptors_map1, 
+                                                                          scores_map2, descriptors_map2,threshold=0.01)
             
+            # 保存根据学习的关键点预测出的相对位姿变换
+            est_translation = est_translation.numpy()   # (B, 2, 2)
+            est_rotation = est_rotation.numpy()         # (B, 2)
+
+            est_rotation = est_rotation.reshape(-1, 2, 1)  # (B, 2, 1)
+
+            # 拼接得到完整的SE2位姿变换矩阵 (B, 2, 3)
+            for k in range(B):
+                R = est_rotation[k]
+                T = est_translation[k]
+                est_pose = np.concatenate([R, T], axis=-1)  # (2, 3)
+
+                est_pose_tran.append(est_pose)
+            
+
             for i in range(B):
                 img_name = imgs_name[i]+'.png'
                 img = im2[i, 0].cpu().numpy()  # 提取单通道图像，并转换为 NumPy
@@ -76,6 +97,50 @@ def main():
                 cv2.imwrite(save_path, img)
 
             # print(f"val_f1_score: {total_f1_score / total_samples}")
+
+    # save estimated_pose_tran data
+    est_pose_tran_dir = os.path.join(val_result_dir, 'est_pose_tran.txt')
+    if not os.path.exists(est_pose_tran_dir ):
+        os.makedirs(est_pose_tran_dir )
+
+    # 行优先顺序写入
+    with open(est_pose_tran_dir, 'w') as f:
+        for matrix in est_pose_tran:
+            flattened = matrix.reshape(-1)
+            line = ' '.join(map(str, flattened))
+            f.write(line + '\n')
+    
+
+
+    # ---------- drift rate evaluation ---------- 
+
+    dataset_path = args.data_path
+    data_preprocessor = Data_Preprocess_merged(dataset_path)
+    
+    # load gt_pose_tran data
+    gt_pose_tran, _ = data_preprocessor.road_odometry_loader()
+
+    # save gt_pose_tran data
+    val_result_dir = './val'
+    if not os.path.exists(val_result_dir):
+        os.makedirs(val_result_dir)
+
+    gt_pose_tran_dir = os.path.join(val_result_dir, 'gt_pose_tran.txt')
+    if not os.path.exists(gt_pose_tran_dir ):
+        os.makedirs(gt_pose_tran_dir )
+
+    # 行优先顺序写入
+    with open(gt_pose_tran_dir, 'w') as f:
+        for matrix in gt_pose_tran:
+            flattened = matrix.reshape(-1)
+            line = ' '.join(map(str, flattened))
+            f.write(line + '\n')
+    
+
+    # compute translational and rotational error
+    vo_eval = Evaluator()
+    vo_eval.eval(gt_pose_tran_dir, est_pose_tran_dir)
+
 
 
 if __name__ == '__main__':
