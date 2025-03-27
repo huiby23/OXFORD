@@ -19,7 +19,7 @@ def Args():
     parser.add_argument("--data_path", default='data/oxford_radar')
     parser.add_argument("--model_save_path", default='check_points')
     parser.add_argument("--logs_path", default='logs')
-    parser.add_argument("--batch_size", default=8, type=int)
+    parser.add_argument("--batch_size", default=6, type=int)
     # optimizer, default Adam
     parser.add_argument("--lr", default=0.001, type=float)
     parser.add_argument("--total_epoch", default=200, type=int)
@@ -89,8 +89,8 @@ def main():
         total_val_loss = 0
 
         with torch.no_grad():
-            for batch_idx, (im1, im2, pos_trans) in enumerate(tqdm(val_loader, desc=f"Validating Epoch {epoch}", ncols=100)):
-                im1, im2,pos_trans = im1.to(device), im2.to(device), pos_trans.to(device)
+            for batch_idx, (im1, im2, pos_trans,_) in enumerate(tqdm(val_loader, desc=f"Validating Epoch {epoch}", ncols=100)):
+                im1, im2, pos_trans = im1.to(device), im2.to(device), pos_trans.to(device)
                 im = torch.cat([im1,im2],dim=0)
                 locations_map, scores_map, descriptors_map = model(im)
                 B=int(locations_map.shape[0]/2)
