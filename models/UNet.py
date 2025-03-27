@@ -74,7 +74,7 @@ class Dual_UNet(nn.Module):
 
         location_feature=self.loc_decoder(x1, x2, x3, x4, x5)
         score_feature=self.score_decoder(x1, x2, x3, x4, x5)
-        location_map=self.Loc_Conv_1x1(location_feature)
+        location_map=self.Loc_Conv_1x1(location_feature)#(B,1,H,W)
         scores_map=self.Score_Conv_1x1(score_feature) #(B,1,H,W)
         descriptors_map = self.Descriptor(x1, x2, x3, x4, x5) #(B,248,H,W)
         # locations_keypoints = self.spatial_softmax_keypoints(self.Loc_Conv_1x1(location_feature)) #(B,400,2)

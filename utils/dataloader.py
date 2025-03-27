@@ -19,7 +19,7 @@ class CustomDataset(Dataset):
         self.root_dir = data_root_dir
         self.data_folders = [os.path.join(data_root_dir, folder) for folder in os.listdir(data_root_dir) if os.path.isdir(os.path.join(data_root_dir, folder))]
         self.train_data=self.data_folders[0:int(len(self.data_folders)*0.8)]
-        self.test_dara=self.data_folders[int(len(self.data_folders)*0.8):]
+        self.test_data=self.data_folders[int(len(self.data_folders)*0.8):]
         self.transform = transforms.Compose(
                                                 [
                                                     transforms.Resize((img_sz, img_sz)),
@@ -32,13 +32,15 @@ class CustomDataset(Dataset):
         if self.mode == 'train':
             return len(self.train_data)
         else:
-            return len(self.test_dara)
+            return len(self.test_data)
 
     def __getitem__(self, idx):
         if self.mode == 'train':
             folder_path = self.train_data[idx]
         else:
-            folder_path = self.test_dara[idx]
+            folder_path = self.test_data[idx]
+
+        img_name = folder_path.split('/')[-1]
 
         # 导入radar扫描图像
         image_1_path = os.path.join(folder_path, 'image_1.png')
@@ -59,7 +61,10 @@ class CustomDataset(Dataset):
         image_2 = self.transform(image_2)
         pose_tran = torch.from_numpy(pose_tran).float()
         
-        return image_1, image_2, pose_tran
+        if self.mode == 'train':
+            return image_1, image_2, pose_tran
+        else:
+            return image_1, image_2, img_name
 
 
 

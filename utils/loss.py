@@ -161,15 +161,19 @@ class Point_Matching_Loss(nn.Module):
         X = torch.stack(torch.meshgrid(torch.arange(H), torch.arange(W), indexing='ij'), dim=-1)#(B,2,H,W)
 
         ps = self.spatial_softmax_keypoints(locations_map1)#(B,num_keypoints,2)
+        
+
         ds = self.extract_keypoint_descriptors(descriptors_map1,ps)#(B,num_keypoints,C)
         _,num_keypoints,_ = ds.shape
 
-        ci = torch.matmul(ds, descriptors_map2.view(B,C,-1))
+        descriptors_map2_normalized = descriptors_map2 / descriptors_map2.norm(p=2, dim=1, keepdim=True)
+
+        ci = torch.matmul(ds, descriptors_map2_normalized.view(B,C,-1))
         S = F.softmax(ci/T, dim=-1).view(B,num_keypoints,H,W)#(B,num_keypoints,H,W)
         pd = self.soft_argmax(S)#(B,num_keypoints,2)
         dd = self.extract_keypoint_descriptors(descriptors_map2,pd)#(B,num_keypoints,C)
-        ss = self.bilinear_sample(scores_map1,pd)#(B, num_keypoints, 1)
-        sd = self.bilinear_sample(scores_map2,ps)#(B, num_keypoints, 1)
+        ss = self.bilinear_sample(scores_map1,ps)#(B, num_keypoints, 1)
+        sd = self.bilinear_sample(scores_map2,pd)#(B, num_keypoints, 1)
         w = (((ds*dd).sum(dim=-1).unsqueeze(-1)+1)*(ss*sd))/2#(B, num_keypoints, 1)
 
         return ps, pd, ds, dd, ss, sd, w
@@ -197,7 +201,7 @@ class Point_Matching_Loss(nn.Module):
         row_ind, col_ind = linear_sum_assignment(cost_matrix)  # 匈牙利算法
         return ps_i[row_ind], pd_i[col_ind]  # 匹配后的坐标
 
-    def eval(self,locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2,threshold=0.5):
+    def match(self,locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2,threshold=0.3):
         
         """
         ds, dd: 描述子 (B, numkeypoints, 248)
@@ -213,41 +217,44 @@ class Point_Matching_Loss(nn.Module):
         B, numkeypoints, _ = ds.shape
         results = []
 
-        for i in range(B):  # 逐 batch 处理
-            # 归一化描述子
-            ds_norm = F.normalize(ds[i], p=2, dim=-1)  # (numkeypoints, 248)
-            dd_norm = F.normalize(dd[i], p=2, dim=-1)  # (numkeypoints, 248)
+        combined_confidence = ss * sd  # 或者使用加法 ss + sd
+    
+        # 筛选出综合置信度大于阈值的关键点
+        mask = combined_confidence.squeeze(-1) > threshold
 
-            # 计算余弦相似度矩阵
-            similarity = torch.mm(ds_norm, dd_norm.T)  # (numkeypoints, numkeypoints)
+        for i in range(B):
+            ps_i = ps[i]  # 当前批次的前一帧坐标
+            pd_i = pd[i]  # 当前批次的后一帧坐标
+            mask_i = mask[i]
 
-            # 计算置信度加权
-            ss_i = ss[i].squeeze(-1)  # (numkeypoints,)
-            sd_i = sd[i].squeeze(-1)  # (numkeypoints,)
-            confidence_weight = ss_i.view(-1, 1) * sd_i.view(1, -1)  # (numkeypoints, numkeypoints)
-            weighted_score = similarity * confidence_weight  # (numkeypoints, numkeypoints)
+            results.append([ps_i[mask_i],pd_i[mask_i]])
+        
+        return results
 
-            # 计算匹配成本矩阵（匈牙利算法要求最小化，因此取负值）
-            cost_matrix = -weighted_score.cpu().numpy()
+        
+        # # 根据mask筛选出满足条件的点
+        ps_filtered = ps[mask]
+        pd_filtered = pd[mask]
+        # ps_filtered = ps
+        # pd_filtered = pd
+        # ss_filtered = ss[mask]
+        # sd_filtered = sd[mask]
 
-            # 进行匈牙利匹配
-            row_ind, col_ind = linear_sum_assignment(cost_matrix)
+        # for i in range(B):  # 逐 batch 处理
+            
 
-            # 计算最终置信度
-            final_scores = torch.min(ss_i[row_ind], sd_i[col_ind])  # (num_matches,)
+        #     # 计算置信度加权
+        #     ss_i = ss[i].squeeze(-1)  # (numkeypoints,)
+        #     sd_i = sd[i].squeeze(-1)  # (numkeypoints,)
+        #     confidence_weight = ss_i * sd_i  # (numkeypoints)
+        #     # weighted_score = similarity * confidence_weight  # (numkeypoints, numkeypoints)
 
-            # 仅保留高置信度的匹配点
-            mask = final_scores >= threshold
-            if mask.sum() > 0:
-                matched_ps = ps[i][row_ind][mask]  # (selected_matches, 2)
-                matched_pd = pd[i][col_ind][mask]  # (selected_matches, 2)
-            else:
-                matched_ps = torch.empty(0, 2)  # 空匹配
-                matched_pd = torch.empty(0, 2)
+        #     mask = confidence_weight >= threshold
+            
 
-            results.append((matched_ps, matched_pd))
+        #     results.append((matched_ps, matched_pd))
 
-        return results  
+        return ps_filtered,pd_filtered
 
         # confidence = ss.unsqueeze(2) * sd.unsqueeze(1)
         # match_scores = cosine_similarity * confidence.mean(dim=-1)

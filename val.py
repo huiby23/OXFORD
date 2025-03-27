@@ -1,7 +1,10 @@
 import numpy as np
 import argparse
 import torch
-
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+import os
 
 from torch.utils.data import DataLoader
 from utils.dataloader import CustomDataset
@@ -12,13 +15,13 @@ from tqdm import tqdm
 def Args():
     parser = argparse.ArgumentParser(description="settings")
     # model
-    parser.add_argument("--model_path", default="resnet18")
+    parser.add_argument("--model_path", default="check_points/model_best.pth")
     # dataset
     parser.add_argument("--data_path", default='data/oxford_radar')
-    # optimizer, default Adam
-    parser.add_argument("--print_freq", default=100, type=int)
     parser.add_argument("--num_keypoints", default=400, type=int)
     parser.add_argument("--img_sz", default=448, type=int)
+    parser.add_argument("--val_save_path", default='results/val')
+    parser.add_argument("--batch_size", default=8)
     args = parser.parse_args()
     return args
 
@@ -28,10 +31,8 @@ def main():
     args = Args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = Dual_UNet().to(device)
-    # optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
-    # lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10)
-    lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3, verbose=True)
+    
+    model.load_state_dict(torch.load(args.model_path, map_location=torch.device("cuda" if torch.cuda.is_available() else "cpu")))
 
     #loss
     pm_loss = Point_Matching_Loss()
@@ -43,16 +44,36 @@ def main():
     #train
     
     model.eval()
+
     with torch.no_grad():
-        for batch_idx, (im1, im2, pos_trans) in enumerate(tqdm(val_loader, desc=f"Validating Epoch {epoch}", ncols=100)):
-            im1, im2,pos_trans = im1.to(device), im2.to(device), pos_trans.to(device)
+        for batch_idx, (im1, im2, imgs_name) in enumerate(tqdm(val_loader, desc=f"inferencing", ncols=100)):
+            im1, im2= im1.to(device), im2.to(device)
             im = torch.cat([im1,im2],dim=0)
             locations_map, scores_map, descriptors_map = model(im)
-            locations_map1, scores_map1, descriptors_map1 = locations_map[0:args.batch_size,:,:,:], scores_map[0:args.batch_size,:,:,:], descriptors_map[0:args.batch_size,:,:,:]
-            locations_map2, scores_map2, descriptors_map2 = locations_map[args.batch_size:,:,:,:], scores_map[args.batch_size:,:,:,:], descriptors_map[args.batch_size:,:,:,:]
-            matched_points = pm_loss.eval(locations_map1, scores_map1, descriptors_map1,locations_map2, scores_map2, descriptors_map2,threshold=0.5)
+            # locations_map1, scores_map1, descriptors_map1 = locations_map[0:args.batch_size,:,:,:], scores_map[0:args.batch_size,:,:,:], descriptors_map[0:args.batch_size,:,:,:]
+            # locations_map2, scores_map2, descriptors_map2 = locations_map[args.batch_size:,:,:,:], scores_map[args.batch_size:,:,:,:], descriptors_map[args.batch_size:,:,:,:]
+            B=int(im2.shape[0])
+            locations_map1, scores_map1, descriptors_map1 = locations_map[0:B,:,:,:], scores_map[0:B,:,:,:], descriptors_map[0:B,:,:,:]
+            locations_map2, scores_map2, descriptors_map2 = locations_map[B:,:,:,:], scores_map[B:,:,:,:], descriptors_map[B:,:,:,:]
+            matched_points = pm_loss.match(locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2,threshold=0.01)
+            
+            for i in range(B):
+                img_name = imgs_name[i]+'.png'
+                img = im2[i, 0].cpu().numpy()  # 提取单通道图像，并转换为 NumPy
+                img = (img * 255).astype(np.uint8)  # 归一化到 0-255 范围
+                img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)  # 转换为三通道 BGR 图像
+                
+                ps_i = np.array(matched_points[i][0].cpu())  # 提取 matched_ps
+                pd_i = np.array(matched_points[i][1].cpu())  # 提取 matched_pd
 
+                # 画匹配点
+                for (x1, y1), (x2, y2) in zip(ps_i, pd_i):
+                    cv2.circle(img, (int(x1), int(y1)), 3, (0, 255, 0), -1)  # 绿色点 (ps)
+                    cv2.circle(img, (int(x2), int(y2)), 3, (0, 0, 255), -1)  # 红色点 (pd)
+                    cv2.line(img, (int(x1), int(y1)), (int(x2), int(y2)), (255, 0, 0), 1)  # 连接线 (蓝色)
 
+                save_path = os.path.join(args.val_save_path,img_name)
+                cv2.imwrite(save_path, img)
 
             # print(f"val_f1_score: {total_f1_score / total_samples}")
 

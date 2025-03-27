@@ -10,6 +10,7 @@ from models.UNet import Dual_UNet
 from utils.loss import Point_Matching_Loss
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
+from datetime import datetime
 
 # torch.cuda.set_per_process_memory_fraction(0.5)
 def Args():
@@ -21,9 +22,7 @@ def Args():
     parser.add_argument("--batch_size", default=8, type=int)
     # optimizer, default Adam
     parser.add_argument("--lr", default=0.001, type=float)
-    parser.add_argument("--total_epoch", default=100, type=int)
-    parser.add_argument("--print_freq", default=100, type=int)
-    parser.add_argument("--num_keypoints", default=400, type=int)
+    parser.add_argument("--total_epoch", default=200, type=int)
     parser.add_argument("--img_sz", default=448, type=int)
     
     args = parser.parse_args()
@@ -36,7 +35,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = Dual_UNet().to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
-    lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3, verbose=True)
+    lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.8, patience=5, verbose=True)
 
     if not os.path.exists(args.model_save_path):
         os.makedirs(args.model_save_path)
@@ -54,7 +53,7 @@ def main():
     val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=4, drop_last=False)
 
     # TensorBoard
-    writer = SummaryWriter(log_dir=args.logs_path)
+    writer = SummaryWriter(log_dir=os.path.join(args.logs_path, 'logs', datetime.now().strftime('%Y-%m-%d_%H-%M-%S')))
 
     #train
     for epoch in range(args.total_epoch):
