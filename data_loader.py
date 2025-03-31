@@ -32,7 +32,7 @@ class Data_Preprocess_merged():
             - cart_data_list: 存储笛卡尔坐标系数据的列表，每个元素是一个笛卡尔坐标图像 (np.ndarray)
             - radar_timestamps: radar扫描数据的source timestamp序列       
         """
-        radar_data_dir = self.dataset_dir / 'radar'
+        radar_data_dir = os.path.join(str(self.dataset_dir), 'radar')
 
         # 判断radar扫描数据文件路径是否存在
         if not radar_data_dir.exists():
@@ -249,7 +249,7 @@ class Data_Preprocess_merged():
             - pose_tran: SE(2)位姿变换矩阵序列
             - total_radar_timestamps: radar扫描数据的source timestamp序列
         """
-        gt_dir = self.dataset_dir / 'gt' / 'radar_odometry.csv'
+        gt_dir = os.path.join(str(self.dataset_dir), 'gt', 'radar_odometry.csv')
         required_columns = ['source_timestamp', 'destination_timestamp', 'x', 'y', 'yaw', 
                             'source_radar_timestamp', 'destination_radar_timestamp']
         
@@ -401,9 +401,9 @@ class Data_Preprocess_merged():
             if not os.path.exists(data_dir):
                 os.makedirs(data_dir)
             
-            cv2.imwrite(str(data_dir / 'image_1.png'), img_1)
-            cv2.imwrite(str(data_dir / 'image_2.png'), img_2)
-            np.save(str(data_dir / 'pose_tran.npy'), pose_tran)
+            cv2.imwrite(str(os.path.join(data_dir, 'image_1.png')), img_1)
+            cv2.imwrite(str(os.path.join(data_dir, 'image_2.png')), img_2)
+            np.save(os.path.join(str(data_dir), 'pose_tran.npy'), pose_tran)
 
         data_num = indices.shape[0] - 1
         print(f'{data_num}组训练数据已经成功保存，保存路径是{train_data_dir}\n')
