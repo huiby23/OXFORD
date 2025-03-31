@@ -12,7 +12,7 @@ from models.UNet import Dual_UNet
 from utils.loss import Point_Matching_Loss
 from tqdm import tqdm
 from data_loader import Data_Preprocess_merged, OXFORD_Dataset
-from odometry_val import Evaluator
+from eval import Evaluator
 # torch.cuda.set_per_process_memory_fraction(0.5)
 def Args():
     parser = argparse.ArgumentParser(description="settings")
