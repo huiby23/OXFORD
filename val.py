@@ -121,19 +121,7 @@ def main():
                 cv2.imwrite(save_path, img)
 
             # print(f"val_f1_score: {total_f1_score / total_samples}")
-
-    # save estimated_pose_tran data
-    est_pose_tran_dir = os.path.join(val_result_dir, 'est_pose_tran.txt')
-    if not os.path.exists(est_pose_tran_dir ):
-        os.makedirs(est_pose_tran_dir )
-
-    # 行优先顺序写入
-    with open(est_pose_tran_dir, 'w') as f:
-        for matrix in est_pose_tran:
-            flattened = matrix.reshape(-1)
-            line = ' '.join(map(str, flattened))
-            f.write(line + '\n')
-    
+ 
 
 
     # ---------- drift rate evaluation ---------- 
@@ -160,6 +148,17 @@ def main():
             line = ' '.join(map(str, flattened))
             f.write(line + '\n')
     
+    # save estimated_pose_tran data
+    est_pose_tran_dir = os.path.join(val_result_dir, 'est_pose_tran.txt')
+    if not os.path.exists(est_pose_tran_dir ):
+        os.makedirs(est_pose_tran_dir )
+
+    # 行优先顺序写入
+    with open(est_pose_tran_dir, 'w') as f:
+        for matrix in est_pose_tran:
+            flattened = matrix.reshape(-1)
+            line = ' '.join(map(str, flattened))
+            f.write(line + '\n')
 
     # compute translational and rotational error
     vo_eval = Evaluator()

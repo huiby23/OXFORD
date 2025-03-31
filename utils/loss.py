@@ -208,7 +208,7 @@ class Point_Matching_Loss(nn.Module):
         sampled_features = F.grid_sample(feature, sample_matrix, align_corners=True)  # (B, 1, num_keypoints, H, W)
         sampled_features = sampled_features.squeeze(1).mean(dim=(-1, -2))
 
-    def soft_argmax(self, S):
+    def soft_aPrgmax(self, S):
         B, num_keypoints, H, W = S.shape
 
         # 生成网格坐标
@@ -323,13 +323,8 @@ class Point_Matching_Loss(nn.Module):
             # mask_i = mask[i]
 
             results.append([ps_i[mask_i],pd_i[mask_i]])
-<<<<<<< HEAD
         
         return results, t, R
-=======
-            # results.append([ps_i,pd_i])
-        return results
->>>>>>> 9c333e9283a65b1c98823fdc835095ea9c5600f6
 
         
         # # 根据mask筛选出满足条件的点
