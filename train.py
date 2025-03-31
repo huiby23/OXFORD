@@ -135,34 +135,38 @@ def main():
         # ---------- drift rate evaluation ---------- 
 
         dataset_path = args.data_path
+        if not os.path.exists(dataset_path):
+            assert IOError(f"Dataset path {dataset_path} does not exist.")
+        print(f"Dataset path: {dataset_path}")
+        
         data_preprocessor = Data_Preprocess_merged(dataset_path)
         
         # load gt_pose_tran data
         gt_pose_tran, _ = data_preprocessor.road_odometry_loader()
 
         # save gt_pose_tran data
-        val_result_dir = './val'
+        val_result_dir = '.\\val'
         if not os.path.exists(val_result_dir):
             os.makedirs(val_result_dir)
 
-        gt_pose_tran_dir = os.path.join(val_result_dir, 'gt_pose_tran.txt')
-        if not os.path.exists(gt_pose_tran_dir ):
-            os.makedirs(gt_pose_tran_dir )
+        gt_pose_tran_dir = os.path.join(val_result_dir, 'gt_pose_tran')
+        if not os.path.exists(gt_pose_tran_dir):
+            os.makedirs(gt_pose_tran_dir)
 
         # 行优先顺序写入
-        with open(gt_pose_tran_dir, 'w') as f:
+        with open(os.path.join(gt_pose_tran_dir, 'gt.txt'), 'w') as f:
             for matrix in gt_pose_tran:
                 flattened = matrix.reshape(-1)
                 line = ' '.join(map(str, flattened))
                 f.write(line + '\n')
         
         # save estimated_pose_tran data
-        est_pose_tran_dir = os.path.join(val_result_dir, 'est_pose_tran.txt')
-        if not os.path.exists(est_pose_tran_dir ):
-            os.makedirs(est_pose_tran_dir )
-
+        est_pose_tran_dir = os.path.join(val_result_dir, 'est_pose_tran')
+        if not os.path.exists(est_pose_tran_dir):
+            os.makedirs(est_pose_tran_dir)
+        
         # 行优先顺序写入
-        with open(est_pose_tran_dir, 'w') as f:
+        with open(os.path.join(est_pose_tran_dir, 'result.txt'), 'w') as f:
             for matrix in est_pose_tran:
                 flattened = matrix.reshape(-1)
                 line = ' '.join(map(str, flattened))
