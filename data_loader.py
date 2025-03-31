@@ -6,7 +6,7 @@ import argparse
 import numpy as np
 import pandas as pd
 from PIL import Image
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 from torchvision import transforms
 from pathlib import Path
 
