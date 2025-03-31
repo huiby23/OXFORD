@@ -11,7 +11,7 @@ from utils.dataloader import CustomDataset
 from models.UNet import Dual_UNet
 from utils.loss import Point_Matching_Loss
 from tqdm import tqdm
-from data_loader import Data_Preprocess_merged, OXFORD_Dataset
+from data_loader import Data_Preprocess_merged
 from eval import Evaluator
 # torch.cuda.set_per_process_memory_fraction(0.5)
 def Args():
