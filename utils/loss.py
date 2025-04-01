@@ -113,7 +113,7 @@ class Point_Matching_Loss(nn.Module):
         patches = locations.unfold(1, cell_size, cell_size).unfold(2, cell_size, cell_size)
         patches = patches.contiguous().view(B, num_keypoints, -1)  # (B, num_keypoints, cell_size²)
 
-        # **在每个 cell 内执行 softmax**
+        # 在每个 cell 内执行 softmax
         softmaxed = F.softmax(patches, dim=-1)  # (B, num_keypoints, cell_size²)
 
         # 计算 cell 内的相对坐标
@@ -133,7 +133,7 @@ class Point_Matching_Loss(nn.Module):
         grid_x, grid_y = torch.meshgrid(grid_x, grid_y, indexing="ij")
         grid_offsets = torch.stack([grid_x.flatten(), grid_y.flatten()], dim=-1)  # (num_keypoints, 2)
 
-        # **加上 cell 偏移量，得到全局坐标**
+        # 加上 cell 偏移量，得到全局坐标
         keypoints = keypoints + grid_offsets.unsqueeze(0)  # (B, num_keypoints, 2)
 
         return keypoints
@@ -208,7 +208,7 @@ class Point_Matching_Loss(nn.Module):
         sampled_features = F.grid_sample(feature, sample_matrix, align_corners=True)  # (B, 1, num_keypoints, H, W)
         sampled_features = sampled_features.squeeze(1).mean(dim=(-1, -2))
 
-    def soft_aPrgmax(self, S):
+    def soft_argmax(self, S):
         B, num_keypoints, H, W = S.shape
 
         # 生成网格坐标
@@ -225,65 +225,91 @@ class Point_Matching_Loss(nn.Module):
 
         return keypoints
     
-    def pix2world(self, locations, resolution=0.25):
+    def pix2world(self, locations, resolution, H, W):
         
-        world_coordinates = locations*resolution
+        # 坐标原点转移到图像中心
+        offset_x = (W - 1) / 2.0
+        offset_y = (H - 1) / 2.0
+
+        # Clone to avoid modifying input tensor
+        world_coordinates = locations.clone().to(torch.float32)
+
+        # Shift scale
+        # x向右为正，y向下为正
+        world_coordinates[..., 0] = (locations[..., 0] - offset_x) * resolution
+        world_coordinates[..., 1] = (offset_y - locations[..., 1]) * resolution
 
         return world_coordinates
     
     def point_match(self,  locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2,):
 
-        B, C, H, W = descriptors_map1.shape#(B,1,H,W)
-        T=0.01
+        B, C, H, W = descriptors_map1.shape     # (B, C, H, W)
         
-        X = torch.stack(torch.meshgrid(torch.arange(H), torch.arange(W), indexing='ij'), dim=-1)#(B,2,H,W)
+        # Parameters
+        T = 1.0
+        X = torch.stack(torch.meshgrid(torch.arange(H), torch.arange(W), indexing='ij'), dim=-1)    # (H, W, 2)
+        # X = X.permute(2, 0, 1).unsqueeze(0)     # (1, 2, H, W)
+        # X = X.expand(B, -1, -1, -1)             # (B, 2, H, W)
 
-        ps = self.spatial_softmax_keypoints(locations_map1)#(B,num_keypoints,2)
+        ps = self.spatial_softmax_keypoints(locations_map1)     # (B, num_keypoints, 2)
+        _, num_keypoints, _ = ps.shape
+
+        ds = self.extract_keypoint_descriptors(descriptors_map1, ps)    # (B, num_keypoints, C)
         
-        ds = self.extract_keypoint_descriptors(descriptors_map1,ps)#(B,num_keypoints,C)
-        _,num_keypoints,_ = ds.shape
 
-        descriptors_map2_normalized = descriptors_map2 / descriptors_map2.norm(p=2, dim=1, keepdim=True)
+        descriptors_map2_normalized = self.l2_normalize(descriptors_map2, 1e-6) # (B, C, H, W)
 
-        ci = torch.matmul(ds, descriptors_map2_normalized.view(B,C,-1))
+        ci = torch.matmul(ds, descriptors_map2_normalized.view(B, C, -1)) # (B, num_keypoints, H*W)
         # S = F.softmax(ci/T, dim=-1).view(B,num_keypoints,H,W)#(B,num_keypoints,H,W)
         # pd = self.soft_argmax(S)#(B,num_keypoints,2)
 
-        S = F.softmax(ci, dim=-1)#(B,num_keypoints,H,W)
-        max_idx = torch.argmax(S, dim=-1)  # (B, num_keypoints)
+        S = F.softmax(ci * T, dim=-1)       # (B, num_keypoints, H*W)
+        
+        pd = torch.matmul(S, X.view(-1, 2)) # (B, num_keypoints, 2)
 
         # 计算对应的 (y, x) 坐标
         # y_coords = max_idx // W  # 行索引 (y)
-        y_coords = torch.div(max_idx, W, rounding_mode='trunc')
-        x_coords = max_idx % W   # 列索引 (x)
+        # max_idx = torch.argmax(S, dim=-1)   # (B, num_keypoints)
+        # y_coords = torch.div(max_idx, W, rounding_mode='trunc')
+        # x_coords = max_idx % W   # 列索引 (x)
 
-        pd = torch.stack([x_coords, y_coords], dim=-1).float()
+        # pd = torch.stack([x_coords, y_coords], dim=-1).float()
 
-        dd = self.extract_keypoint_descriptors(descriptors_map2,pd)#(B,num_keypoints,C)
-        ss = self.bilinear_sample(scores_map1,ps)#(B, num_keypoints, 1)
-        sd = self.bilinear_sample(scores_map2,pd)#(B, num_keypoints, 1)
-        w = (((ds*dd).sum(dim=-1).unsqueeze(-1)+1)*(ss*sd))/2#(B, num_keypoints, 1)
+        dd = self.extract_keypoint_descriptors(descriptors_map2, pd)    # (B, num_keypoints, C)
+        ss = self.bilinear_sample(scores_map1, ps)   # (B, num_keypoints, 1)
+        sd = self.bilinear_sample(scores_map2, pd)   # (B, num_keypoints, 1)
+        w = (((ds * dd).sum(dim=-1).unsqueeze(-1) + 1) * (ss * sd))/2   # (B, num_keypoints, 1)
 
         return ps, pd, ds, dd, ss, sd, w
     
-    def pose_estimation(self, ps, pd, w):
+    def pose_estimation(self, ps, pd, w, H, W):
         
         epsilon = 1e-6
-        Qs,Qd= self.pix2world(ps),self.pix2world(pd)# (B, num_keypoints, 2)
-        Qs_avg=torch.sum(w * Qs, dim=1) / (torch.sum(w, dim=1)+epsilon)#(B,2)
-        Qd_avg=torch.sum(w * Qd, dim=1) / (torch.sum(w, dim=1)+epsilon)#(B,2)
-        xi=Qs-Qs_avg[:, None, :]# (B, num_keypoints, 2)
-        yi=Qd-Qd_avg[:, None, :]# (B, num_keypoints, 2)
-        S = xi.transpose(1, 2) @ (w * yi) # (B, 2, 2)
-        U, Sigma, V_T = torch.svd(S)  # U=(B,2,2),Sigma=Σ=(B,2),V=(B,2,2)
+        resolution = 0.25
 
-        det_sign = torch.det(V_T @ U.transpose(-2, -1)).unsqueeze(-1).unsqueeze(-1) 
+        # ps, pd: (B, num_keypoints, 2)
+        # ps范围在[0, W-1]，pd范围在[0, H-1]
+        # ps, pd坐标原点在左上角，x轴向右，y轴向下
+        Qs = self.pix2world(ps, resolution, H, W)   # (B, num_keypoints, 2)
+        Qd = self.pix2world(pd, resolution, H, W)   # (B, num_keypoints, 2)
+
+        Qs_avg = torch.sum(w * Qs, dim=1) / (torch.sum(w, dim=1) + epsilon) # (B, 2)
+        Qd_avg = torch.sum(w * Qd, dim=1) / (torch.sum(w, dim=1) + epsilon) # (B, 2)
+        
+        xi = Qs - Qs_avg[:, None, :]    # (B, num_keypoints, 2)
+        yi = Qd - Qd_avg[:, None, :]    # (B, num_keypoints, 2)
+        
+        S = xi.transpose(1, 2) @ (w * yi)   # (B, 2, 2)
+        U, Sigma, V_T = torch.svd(S)    # U=(B, 2, 2), Sigma=Σ=(B, 2), V=(B, 2, 2)
+
+        det_sign = torch.det(V_T @ U.transpose(-2, -1)).unsqueeze(-1).unsqueeze(-1)     # (B, 1, 1)
         d = torch.eye(2, device=S.device).unsqueeze(0).repeat(S.shape[0], 1, 1)  # (B, 2, 2)
         d[:, -1, -1] = det_sign.squeeze()
-        R = V_T @ d @ U.transpose(-2, -1)# (B, 2, 2)
+        R = V_T @ d @ U.transpose(-2, -1)   # (B, 2, 2)
+        
         t = Qd_avg - (R @ Qs_avg.unsqueeze(-1)).squeeze(-1) # (B, 2)
 
-        return t,R
+        return t, R
     
     def hungarian_match(self, cost_matrix, ps_i, pd_i):
         row_ind, col_ind = linear_sum_assignment(cost_matrix)  # 匈牙利算法
@@ -364,18 +390,18 @@ class Point_Matching_Loss(nn.Module):
 
     def forward(self,  locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2,pos_trans):
 
+        _, _, H, W = descriptors_map1.shape     # (B, C, H, W)
 
-
-        ps, pd,_,_,_,_, w = self.point_match(locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2)
+        ps, pd, _,_,_,_, w = self.point_match(locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2)
         
-        t,R = self.pose_estimation(ps, pd, w)
+        t, R = self.pose_estimation(ps, pd, w, H, W)
 
-        t_real = pos_trans[:, :2, 2] # (B,2)
-        R_real = pos_trans[:, :2, :2] # (B,2,2)
+        t_real = pos_trans[:, :2, 2]    # (B, 2)
+        R_real = pos_trans[:, :2, :2]   # (B, 2, 2)
 
-        loss_t=torch.norm(t_real - t, p=2, dim=1).mean() #
-        loss_R=torch.norm(R_real @ R.transpose(-2, -1) - torch.eye(2, device=R.device), p=2, dim=(1, 2)).mean()
-        loss = loss_t + self.alpha*loss_R
+        loss_t = torch.norm(t_real - t, p=2, dim=1).mean() #
+        loss_R = torch.norm(R_real @ R.transpose(-2, -1) - torch.eye(2, device=R.device), p=2, dim=(1, 2)).mean()
+        loss = loss_t + self.alpha * loss_R
 
         return loss.mean()
 
