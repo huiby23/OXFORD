@@ -11,6 +11,8 @@ from utils.dataloader import CustomDataset
 from models.UNet import Dual_UNet
 from utils.loss import Point_Matching_Loss
 from tqdm import tqdm
+import random
+random.seed(1)
 # torch.cuda.set_per_process_memory_fraction(0.5)
 def Args():
     parser = argparse.ArgumentParser(description="settings")
@@ -44,6 +46,9 @@ def main():
 
     if not os.path.exists(args.val_save_path):
         os.makedirs(args.val_save_path)
+
+    if not os.path.exists('results/combine'):
+        os.makedirs('results/combine')
     #train
     
     model.eval()

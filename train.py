@@ -11,6 +11,8 @@ from utils.loss import Point_Matching_Loss
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
+import random
+random.seed(1)
 
 # torch.cuda.set_per_process_memory_fraction(0.5)
 def Args():
@@ -67,6 +69,7 @@ def main():
             im = torch.cat([im1,im2],dim=0)
             optimizer.zero_grad()
             locations_map, scores_map, descriptors_map = model(im)
+            # scores_map, descriptors_map = model(im)
             B=int(locations_map.shape[0]/2)
             locations_map1, scores_map1, descriptors_map1 = locations_map[0:B,:,:,:], scores_map[0:B,:,:,:], descriptors_map[0:B,:,:,:]
             _, scores_map2, descriptors_map2 = locations_map[B:,:,:,:], scores_map[B:,:,:,:], descriptors_map[B:,:,:,:]
