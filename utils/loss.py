@@ -148,7 +148,7 @@ class Point_Matching_Loss(nn.Module):
 
     #     return keypoints
 
-    def soft_argmax(self,S, H, W):
+    def soft_argmax(self, S, H, W):
         """
         Applies soft-argmax to the input tensor S to find the approximate argmax coordinates.
         
@@ -192,18 +192,21 @@ class Point_Matching_Loss(nn.Module):
         W: 图像的宽度
         H: 图像的高度
         """
-
+        
         # 计算图像中心的坐标 (W/2, H/2)
-        center_x = W / 2
-        center_y = H / 2
+        center_x = H / 2
+        center_y = W / 2
+        x_resolution = 100/H
+        y_resolution = 100/W
 
         # 将坐标系转换为以图像中心为原点
         # locations 的形状为 (B, num_keypoints, 2)
         x_coords, y_coords = locations[:, :, 0], locations[:, :, 1]
 
         # 以图像中心为原点的坐标
-        x_world = (x_coords - center_x) * resolution
-        y_world = (y_coords - center_y) * resolution
+        x_world = (-1)*(y_coords - center_x) * x_resolution
+
+        y_world = (x_coords - center_y) * y_resolution
 
         # 结合 x, y 坐标，得到 (B, num_keypoints, 2)
         world_coordinates = torch.stack([x_world, y_world], dim=-1)
