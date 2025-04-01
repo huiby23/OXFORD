@@ -481,8 +481,8 @@ class Evaluator():
             self.cur_seq = '{:02}'.format(i)
             file_name = '{:02}.txt'.format(i)
 
-            poses_result = self.load_poses_from_list(est_dir+"/"+file_name)
-            poses_gt = self.load_poses_from_list(self.gt_dir + "/" + file_name)
+            poses_result = self.load_poses_from_txt(est_dir+"/"+file_name)
+            poses_gt = self.load_poses_from_txt(self.gt_dir + "/" + file_name)
 
             # Pose alignment to first frame
             idx_0 = sorted(list(poses_result.keys()))[0]
