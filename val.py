@@ -49,10 +49,13 @@ def main():
     
     model.eval()
 
-    # 根据学习的关键点，预测出的相对位姿变换
-    est_pose_tran = []
+    # 预测出的相对位姿变换的list，长度为epoch
+    est_pose_tran_list = []  
 
     with torch.no_grad():
+        # 根据学习的关键点，预测出的相对位姿变换
+        est_pose_tran = []
+
         for batch_idx, (im1, im2, _,imgs_name) in enumerate(tqdm(val_loader, desc=f"inferencing", ncols=100)):
             im1, im2= im1.to(device), im2.to(device)
             im = torch.cat([im1,im2],dim=0)
@@ -120,11 +123,18 @@ def main():
                 cv2.imwrite(save_path, img)
 
             # print(f"val_f1_score: {total_f1_score / total_samples}")
+        
+        # Save the estimated pose transformation for drift rate evaluation
+        est_pose_tran_list.append(est_pose_tran)
  
 
     # ---------- drift rate evaluation ---------- 
+    val_result_dir = os.path.join(args.model_save_path, 'train_drift_rate')
+    if not os.path.exists(val_result_dir):
+        os.makedirs(val_result_dir)
+    
     drift_rate_val = Drift_rate_eval()
-    drift_rate_val(args.data_path, est_pose_tran)
+    drift_rate_val(args.data_path, est_pose_tran_list, val_result_dir, len(est_pose_tran_list))
 
 
 

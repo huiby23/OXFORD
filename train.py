@@ -55,14 +55,19 @@ def main():
     # TensorBoard
     writer = SummaryWriter(log_dir=os.path.join(args.logs_path, 'logs', datetime.now().strftime('%Y-%m-%d_%H-%M-%S')))
 
+    # 预测出的相对位姿变换的list，每个元素是一个
+    est_pose_tran_list = []  
+
     #train
     for epoch in range(args.total_epoch):
 
         print(f"EPOCH: {epoch}/{args.total_epoch}")
         model.train()
         total_loss = 0
-        est_pose_tran = []  # 根据学习的关键点，预测出的相对位姿变换
 
+        # 根据学习的关键点，预测出的相对位姿变换
+        est_pose_tran = []  
+        
         for batch_idx, (im1, im2, pos_trans) in enumerate(tqdm(train_loader, desc=f"Training Epoch {epoch}", ncols=100)):
             im1, im2,pos_trans = im1.to(device), im2.to(device), pos_trans.to(device)
             im = torch.cat([im1,im2],dim=0)
@@ -79,7 +84,7 @@ def main():
             total_loss += loss.item()
 
             # odometry estimation
-            matched_points, est_translation, est_rotation = pm_loss.match(locations_map1, scores_map1, descriptors_map1, 
+            _, est_translation, est_rotation = pm_loss.match(locations_map1, scores_map1, descriptors_map1, 
                                                                           scores_map2, descriptors_map2,threshold=0.01)
             
             # 保存根据学习的关键点预测出的相对位姿变换
@@ -131,9 +136,16 @@ def main():
             torch.save(model.state_dict(), "{}/model_best.pth".format(args.model_save_path))
         
         
-        # ---------- drift rate evaluation ---------- 
-        drift_rate_val = Drift_rate_eval()
-        drift_rate_val(args.data_path, est_pose_tran)
+        # Save the estimated pose transformation for drift rate evaluation
+        est_pose_tran_list.append(est_pose_tran)
+    
+    # ---------- drift rate evaluation ----------
+    val_result_dir = os.path.join(args.model_save_path, 'train_drift_rate')
+    if not os.path.exists(val_result_dir):
+        os.makedirs(val_result_dir)
+    
+    drift_rate_val = Drift_rate_eval()
+    drift_rate_val(args.data_path, est_pose_tran_list, val_result_dir, epoch)
 
 
 if __name__ == '__main__':

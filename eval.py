@@ -8,10 +8,10 @@ class Drift_rate_eval:
     def __init__(self):
         pass
 
-    def __call__(self, data_path, est_pose_tran):
-        self.run(data_path, est_pose_tran)
+    def __call__(self, data_path, est_pose_tran_list, val_result_dir, epoch):
+        self.run(data_path, est_pose_tran_list, val_result_dir, epoch)
 
-    def run(self, data_path, est_pose_tran): 
+    def run(self, data_path, est_pose_tran_list, val_result_dir, epoch): 
         # ---------- drift rate evaluation ---------- 
 
         dataset_path = data_path
@@ -25,20 +25,18 @@ class Drift_rate_eval:
         gt_pose_tran, _ = data_preprocessor.road_odometry_loader()
 
         # save gt_pose_tran data
-        val_result_dir = '.\\val'
-        if not os.path.exists(val_result_dir):
-            os.makedirs(val_result_dir)
-
         gt_pose_tran_dir = os.path.join(val_result_dir, 'gt_pose_tran')
         if not os.path.exists(gt_pose_tran_dir):
             os.makedirs(gt_pose_tran_dir)
 
         # 行优先顺序写入
-        with open(os.path.join(gt_pose_tran_dir, 'gt.txt'), 'w') as f:
-            for matrix in gt_pose_tran:
-                flattened = matrix.reshape(-1)
-                line = ' '.join(map(str, flattened))
-                f.write(line + '\n')
+        for i in range(epoch):
+            file_name = '{:02}.txt'.format(i)
+            with open(os.path.join(gt_pose_tran_dir, file_name), 'w') as f:
+                for matrix in gt_pose_tran:
+                    flattened = matrix.reshape(-1)
+                    line = ' '.join(map(str, flattened))
+                    f.write(line + '\n')
 
         # save estimated_pose_tran data
         est_pose_tran_dir = os.path.join(val_result_dir, 'est_pose_tran')
@@ -46,15 +44,26 @@ class Drift_rate_eval:
             os.makedirs(est_pose_tran_dir)
 
         # 行优先顺序写入
-        with open(os.path.join(est_pose_tran_dir, 'result.txt'), 'w') as f:
-            for matrix in est_pose_tran:
-                flattened = matrix.reshape(-1)
-                line = ' '.join(map(str, flattened))
-                f.write(line + '\n')
+        for i in range(epoch):
+            file_name = '{:02}.txt'.format(i)
+            with open(os.path.join(est_pose_tran_dir, file_name), 'w') as f:
+                for matrix in est_pose_tran_list[i]:
+                    flattened = matrix.reshape(-1)
+                    line = ' '.join(map(str, flattened))
+                    f.write(line + '\n')
+        
+        # save error after computing
+        err_result_dir = os.path.join(val_result_dir, 'err_result')
+        if not os.path.exists(err_result_dir):
+            os.makedirs(err_result_dir)
 
+        # create an empty file to save error
+        with open(os.path.join(err_result_dir, 'result.txt'), 'w') as f:
+            pass
+        
         # compute translational and rotational error
         vo_eval = Evaluator()
-        vo_eval.eval(gt_pose_tran_dir, est_pose_tran_dir)
+        vo_eval.eval(gt_pose_tran_dir, est_pose_tran_dir, err_result_dir, epoch)
 
 
 if __name__ == '__main__':

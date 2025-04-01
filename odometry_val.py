@@ -434,13 +434,19 @@ class Evaluator():
             f.writelines(line)
 
 
-    def eval(self, gt_dir, result_dir):
+    def eval(self, gt_dir, est_dir, err_result_dir, epoch):
         """Evaulate required/available sequences
         Args:
             gt_dir (str): ground truth poses txt files directory
-            result_dir (str): pose predictions txt files directory
+            est_dir (str): pose predictions txt files directory
+            err_result_dir (str): directory for saving errors
+            epoch (int): number of sequences to evaluate
         """
-        seq_list = ["{:02}".format(i) for i in range(0, 11)]
+        if epoch <= 100:
+            seq_list = ["{:02}".format(i) for i in range(0, epoch)]
+        else:
+            assert IOError("Epoch is larger than 100, we only evaluate the first 100 sequences.")
+            seq_list = ["{:02}".format(i) for i in range(0, 100)]
 
         # Initialization
         self.gt_dir = gt_dir
@@ -451,10 +457,10 @@ class Evaluator():
         seq_rpe_rot = []
 
         # Create result directory
-        error_dir = result_dir + "/errors"
-        self.plot_path_dir = result_dir + "/plot_path"
-        self.plot_error_dir = result_dir + "/plot_error"
-        result_txt = os.path.join(result_dir, "result.txt")
+        error_dir = err_result_dir + "/errors"
+        self.plot_path_dir = err_result_dir + "/plot_path"
+        self.plot_error_dir = err_result_dir + "/plot_error"
+        result_txt = os.path.join(err_result_dir, "result.txt")
         f = open(result_txt, 'w')
 
         if not os.path.exists(error_dir):
@@ -465,7 +471,7 @@ class Evaluator():
             os.makedirs(self.plot_error_dir)
 
         # Create evaluation list
-        available_seqs = sorted(glob(os.path.join(result_dir, "*.txt")))
+        available_seqs = sorted(glob(os.path.join(est_dir, "*.txt")))
         self.eval_seqs = [int(i[-6:-4]) for i in available_seqs if i[-6:-4] in seq_list]
         
         # evaluation
@@ -475,9 +481,8 @@ class Evaluator():
             self.cur_seq = '{:02}'.format(i)
             file_name = '{:02}.txt'.format(i)
 
-            poses_result = self.load_poses_from_list(result_dir+"/"+file_name)
+            poses_result = self.load_poses_from_list(est_dir+"/"+file_name)
             poses_gt = self.load_poses_from_list(self.gt_dir + "/" + file_name)
-            self.result_file_name = result_dir+file_name
 
             # Pose alignment to first frame
             idx_0 = sorted(list(poses_result.keys()))[0]
