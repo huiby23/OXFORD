@@ -77,7 +77,7 @@ class Point_Matching_Loss(nn.Module):
         assert keypoints.shape[-1] == 2
 
         B, C, H, W = X.shape
-        num_keypoints = keypoints.shape[1]
+        # num_keypoints = keypoints.shape[1]
 
         # Normalize keypoints to the range [-1, 1] for grid_sample
         x = (keypoints[..., 0] / (W - 1)) * 2 - 1  # Normalize to [-1, 1]
@@ -196,8 +196,8 @@ class Point_Matching_Loss(nn.Module):
         # 计算图像中心的坐标 (W/2, H/2)
         center_x = H / 2
         center_y = W / 2
-        x_resolution = 100/H
-        y_resolution = 100/W
+        x_resolution = 0.25*H/501
+        y_resolution = 0.25*W/501
 
         # 将坐标系转换为以图像中心为原点
         # locations 的形状为 (B, num_keypoints, 2)
@@ -268,7 +268,7 @@ class Point_Matching_Loss(nn.Module):
         sd = self.bilinear_sample(scores_map2,pd)#(B, num_keypoints, 1)
         w = (((ds*dd).sum(dim=-1).unsqueeze(-1)+1)*(ss*sd))/2#(B, num_keypoints, 1)
 
-        return ps, pd, ds, dd, ss, sd, w
+        return ps, pd, ds, dd, ss, sd, w, S.view(B,num_keypoints,H,W)
     
     def pose_estimation(self, ps, pd, w, W,H):
         
@@ -303,7 +303,7 @@ class Point_Matching_Loss(nn.Module):
         每个 batch 独立返回 (matched_ps, matched_pd)，如果无匹配则返回空张量
         """
 
-        ps, pd, ds, dd, ss, sd, _ = self.point_match(locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2)
+        ps, pd, ds, dd, ss, sd, _,S = self.point_match(locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2)
         
         B, numkeypoints, _ = ds.shape
         results = []
@@ -322,14 +322,14 @@ class Point_Matching_Loss(nn.Module):
 
             results.append([ps_i[mask_i],pd_i[mask_i]])
             # results.append([ps_i,pd_i])
-        return results
+        return results,S
 
     def forward(self,  locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2,pos_trans):
 
 
         B, _, H, W = descriptors_map1.shape#(B,1,H,W)
 
-        ps, pd,_,_,_,_, w = self.point_match(locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2)
+        ps, pd,_,_,_,_, w,_ = self.point_match(locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2)
         
         t,R = self.pose_estimation(ps, pd, w,W,H)
 
