@@ -77,7 +77,7 @@ class Point_Matching_Loss(nn.Module):
         assert keypoints.shape[-1] == 2
 
         B, C, H, W = X.shape
-        num_keypoints = keypoints.shape[1]
+        # num_keypoints = keypoints.shape[1]
 
         # Normalize keypoints to the range [-1, 1] for grid_sample
         x = (keypoints[..., 0] / (W - 1)) * 2 - 1  # Normalize to [-1, 1]
@@ -225,7 +225,7 @@ class Point_Matching_Loss(nn.Module):
     def point_match(self,  locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2,):
 
         B, C, H, W = descriptors_map1.shape     # (B, C, H, W)
-        T = 0.01
+        T = 5000
 
         # X = torch.stack(torch.meshgrid(torch.arange(H), torch.arange(W), indexing='ij'), dim=-1)    # (H, W, 2)
 

@@ -19,8 +19,8 @@ class CustomDataset(Dataset):
         self.root_dir = data_root_dir
         self.data_folders = [os.path.join(data_root_dir, folder) for folder in os.listdir(data_root_dir) if os.path.isdir(os.path.join(data_root_dir, folder))]
         self.train_data=self.data_folders[0:int(len(self.data_folders)*0.8)]
-        # self.test_data=self.data_folders[int(len(self.data_folders)*0.8):]
-        self.test_data=self.data_folders[0:int(len(self.data_folders)*0.8)]
+        self.test_data=self.data_folders[int(len(self.data_folders)*0.8):]
+        # self.test_data=self.data_folders[0:int(len(self.data_folders)*0.8)]
         self.transform = transforms.Compose(
                                                 [
                                                     transforms.Resize((img_sz, img_sz)),

@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
-from robotcar_dataset_sdk.python.play_radar_new import play_radar_data
-from robotcar_dataset_sdk.python.build_pointcloud import build_pointcloud
+# from robotcar_dataset_sdk.python.play_radar_new import play_radar_data
+# from robotcar_dataset_sdk.python.build_pointcloud import build_pointcloud
 
 
 
@@ -21,6 +21,6 @@ else:
 # polar_data_list: 存储极坐标系数据的列表，每个元素是一个元组 (timestamps, azimuths, valid, fft_data, radar_resolution)
 # cart_data_list: 存储笛卡尔坐标系数据的列表，每个元素是一个笛卡尔坐标图像 (np.ndarray)
 
-polar_data, cart_data = play_radar_data(str(radar_data_dir), display_time = 1000)
+# polar_data, cart_data = play_radar_data(str(radar_data_dir), display_time = 1000)
 # pointcloud, reflectance = build_pointcloud()
 
