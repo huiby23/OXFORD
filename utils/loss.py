@@ -205,8 +205,8 @@ class Point_Matching_Loss(nn.Module):
         # 计算图像中心的坐标 (W/2, H/2)
         center_x = H / 2
         center_y = W / 2
-        x_resolution = 0.25*H/501
-        y_resolution = 0.25*W/501
+        x_resolution = 0.25*H
+        y_resolution = 0.25*W
 
         # 将坐标系转换为以图像中心为原点
         # locations 的形状为 (B, num_keypoints, 2)

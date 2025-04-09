@@ -35,7 +35,7 @@ class Data_Preprocess_merged():
         radar_data_dir = os.path.join(str(self.dataset_dir), 'radar')
 
         # 判断radar扫描数据文件路径是否存在
-        if not radar_data_dir.exists():
+        if not os.path.exists(radar_data_dir):
             raise IOError(f'{radar_data_dir}路径不存在，请检查radar扫描数据路径!')
         
         # 初始化
@@ -372,7 +372,7 @@ class Data_Preprocess_merged():
         # 其中XXXX比YYYY小，也即pose_tran对应img1到img2的位姿变换
 
         # 判断radar扫描数据文件路径是否存在
-        if not train_data_dir.exists():
+        if not os.path.exists(train_data_dir):
             raise IOError(f'{train_data_dir}路径不存在，请检查train data保存路径!')
         
         # 清空train_data文件夹

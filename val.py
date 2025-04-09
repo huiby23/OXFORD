@@ -84,8 +84,8 @@ def main():
                                                                           scores_map2, descriptors_map2,threshold=0.01)
             
             # 保存根据学习的关键点预测出的相对位姿变换
-            est_translation = est_translation.numpy()   # (B, 2, 2)
-            est_rotation = est_rotation.numpy()         # (B, 2)
+            est_translation = est_translation.cpu().numpy()   # (B, 2, 2)
+            est_rotation = est_rotation.cpu().numpy()         # (B, 2)
 
             est_rotation = est_rotation.reshape(-1, 2, 1)  # (B, 2, 1)
 
