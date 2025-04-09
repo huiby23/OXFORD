@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+# torch.set_printoptions(threshold=torch.inf)
 
 from torch.utils.data import DataLoader
 from utils.dataloader import CustomDataset

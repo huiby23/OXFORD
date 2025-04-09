@@ -216,7 +216,7 @@ class Point_Matching_Loss(nn.Module):
     def point_match(self,  locations_map1, scores_map1, descriptors_map1, scores_map2, descriptors_map2,):
 
         B, C, H, W = descriptors_map1.shape#(B,1,H,W)
-        T=0.01
+        T=50000
         
         # X = torch.stack(torch.meshgrid(torch.arange(H), torch.arange(W), indexing='ij'), dim=-1)#(B,2,H,W)
 
@@ -225,43 +225,25 @@ class Point_Matching_Loss(nn.Module):
         ds = self.extract_keypoint_descriptors(descriptors_map1,ps)#(B,num_keypoints,C)
         _,num_keypoints,_ = ds.shape
 
-        descriptors_map2_normalized = descriptors_map2 / descriptors_map2.norm(p=2, dim=1, keepdim=True)
-
+        descriptors_map2_normalized = descriptors_map2 / descriptors_map2.norm(p=2, dim=1, keepdim=True)#(B,C,H,W)
+        # descriptors_map2_normalized = descriptors_map2
         ci = torch.matmul(ds, descriptors_map2_normalized.view(B,C,-1))#(B,num_keypoints,H*W)
-
-        # S = F.softmax(ci/T, dim=-1).view(B,num_keypoints,H,W) # (B, num_keypoints, H, W)
-        S = F.softmax(ci/T, dim=-1)
+        
+        #softargmax begin
+        S = F.softmax(ci*T, dim=-1)
         # 创建网格坐标 (y, x)
         y_coords = torch.arange(0, H, device=ci.device).float()  # (H,)
         x_coords = torch.arange(0, W, device=ci.device).float()  # (W,)
         y_grid, x_grid = torch.meshgrid(y_coords, x_coords, indexing='ij')  # (H, W), (H, W)
-
         # 展平网格坐标为 (H * W)
         y_grid = y_grid.contiguous().view(-1)  # (H * W)
         x_grid = x_grid.contiguous().view(-1)  # (H * W)
-
-        # 将 S 展平，变为 (B, num_keypoints, H * W)
-        # S_flat = S.view(B, num_keypoints, -1)
-
         # 计算加权坐标
         weighted_y = torch.matmul(S, y_grid)  # (B, num_keypoints)
         weighted_x = torch.matmul(S, x_grid)  # (B, num_keypoints)
-
         # 将结果堆叠成 (B, num_keypoints, 2)
         pd = torch.stack([weighted_x, weighted_y], dim=-1)  # (B, num_keypoints, 2)
-
-        # S = F.softmax(ci/T, dim=-1).view(B,num_keypoints,H,W)#(B,num_keypoints,H,W)
-        
-        # pd = self.soft_argmax(S,H,W)
-        # pd = self.soft_argmax(S)#(B,num_keypoints,2)
-        # grid_y, grid_x = torch.meshgrid(torch.arange(H, device=S.device), 
-        #                         torch.arange(W, device=S.device), 
-        #                         indexing="ij")
-        # X = torch.stack((grid_x, grid_y), dim=-1).float()  # (H, W, 2)
-        # X = X.unsqueeze(0).unsqueeze(0).expand(B, num_keypoints, H, W, 2)  # (B, num_keypoints, H, W, 2)
-
-        # 计算目标点 pd
-        # pd = (S.unsqueeze(-1) * X).sum(dim=(2, 3))  # (B, num_keypoints, 2)
+        #softargmax end
 
         dd = self.extract_keypoint_descriptors(descriptors_map2,pd)#(B,num_keypoints,C)
         ss = self.bilinear_sample(scores_map1,ps)#(B, num_keypoints, 1)

@@ -24,7 +24,7 @@ def Args():
     parser.add_argument("--batch_size", default=6, type=int)
     # optimizer, default Adam
     parser.add_argument("--lr", default=0.001, type=float)
-    parser.add_argument("--total_epoch", default=200, type=int)
+    parser.add_argument("--total_epoch", default=400, type=int)
     parser.add_argument("--img_sz", default=448, type=int)
     
     args = parser.parse_args()
