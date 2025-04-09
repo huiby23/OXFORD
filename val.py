@@ -11,6 +11,8 @@ from utils.dataloader import CustomDataset
 from models.UNet import Dual_UNet
 from utils.loss import Point_Matching_Loss
 from tqdm import tqdm
+import random
+random.seed(1)
 from eval import Drift_rate_eval
 # torch.cuda.set_per_process_memory_fraction(0.5)
 def Args():
@@ -25,6 +27,15 @@ def Args():
     parser.add_argument("--batch_size", default=8)
     args = parser.parse_args()
     return args
+
+def add_text_to_image(image, text):
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 1
+    color = (255, 255, 255)  # 白色文字
+    thickness = 2
+    position = (10, 30)  # 左上角位置
+    image_with_text = cv2.putText(image.copy(), text, position, font, font_scale, color, thickness, lineType=cv2.LINE_AA)
+    return image_with_text
 
 def main():
     
@@ -45,12 +56,16 @@ def main():
 
     if not os.path.exists(args.val_save_path):
         os.makedirs(args.val_save_path)
-    #train
+
+    if not os.path.exists('results/combine'):
+        os.makedirs('results/combine')
     
-    model.eval()
 
     # 预测出的相对位姿变换的list，长度为epoch
     est_pose_tran_list = []  
+
+    #train
+    model.eval()
 
     with torch.no_grad():
         # 根据学习的关键点，预测出的相对位姿变换
@@ -65,7 +80,7 @@ def main():
             B=int(im2.shape[0])
             locations_map1, scores_map1, descriptors_map1 = locations_map[0:B,:,:,:], scores_map[0:B,:,:,:], descriptors_map[0:B,:,:,:]
             locations_map2, scores_map2, descriptors_map2 = locations_map[B:,:,:,:], scores_map[B:,:,:,:], descriptors_map[B:,:,:,:]
-            matched_points, est_translation, est_rotation = pm_loss.match(locations_map1, scores_map1, descriptors_map1, 
+            matched_points, S, est_translation, est_rotation = pm_loss.match(locations_map1, scores_map1, descriptors_map1, 
                                                                           scores_map2, descriptors_map2,threshold=0.01)
             
             # 保存根据学习的关键点预测出的相对位姿变换
@@ -83,13 +98,30 @@ def main():
                 est_pose_tran.append(est_pose)
             
 
+            ps= pm_loss.spatial_softmax_keypoints(locations_map1)
             for i in range(B):
 
                 loc=locations_map1[i, 0].cpu().numpy()
                 loc = cv2.normalize(loc, None, 0, 255, cv2.NORM_MINMAX)
                 loc = (loc).astype(np.uint8)# 归一化到 0-255 范围
                 loc = cv2.cvtColor(loc, cv2.COLOR_GRAY2BGR)
+                loc = add_text_to_image(loc, 'Location 1 Map')
                 # cv2.imwrite('loc.png', loc)
+                
+                similarity=S[i, 200].cpu().numpy()
+                similarity = cv2.normalize(similarity, None, 0, 255, cv2.NORM_MINMAX)
+                similarity = (similarity).astype(np.uint8)# 归一化到 0-255 范围
+                similarity = cv2.cvtColor(similarity, cv2.COLOR_GRAY2BGR)
+                similarity = add_text_to_image(similarity, 'cos similarity Map')
+
+                ps_image = np.zeros((448,448), dtype=np.uint8)
+                # x, y = ps[i][:, 0].clamp(0, 448 - 1).long(), ps[:, 1].clamp(0, 448 - 1).long()
+                x, y = ps[i,:,0],ps[i,:,1]
+                ps_image[y.cpu().numpy().astype(int), x.cpu().numpy().astype(int)] = 255
+                ps_image = (ps_image).astype(np.uint8)
+                ps_image = cv2.cvtColor(ps_image, cv2.COLOR_GRAY2BGR)
+                ps_image = add_text_to_image(ps_image, 'ps location')
+
 
                 scores=scores_map1[i, 0].cpu().numpy()
                 # scores = (scores * 255).astype(np.uint8)  # 归一化到 0-255 范围
@@ -97,6 +129,15 @@ def main():
                 scores = scores.astype(np.uint8)
 
                 scores = cv2.cvtColor(scores, cv2.COLOR_GRAY2BGR)
+                scores = add_text_to_image(scores, 'scores1 Map')
+
+                scores2=scores_map2[i, 0].cpu().numpy()
+                # scores = (scores * 255).astype(np.uint8)  # 归一化到 0-255 范围
+                scores2 = cv2.normalize(scores2, None, 0, 255, cv2.NORM_MINMAX)
+                scores2 = scores2.astype(np.uint8)
+
+                scores2 = cv2.cvtColor(scores2, cv2.COLOR_GRAY2BGR)
+                scores2 = add_text_to_image(scores2, 'scores2 Map')
                 # cv2.imwrite('scores.png', scores)
                 
                 img_name = imgs_name[i]+'.png'
@@ -117,7 +158,15 @@ def main():
 
                 save_path = os.path.join(args.val_save_path,img_name)
 
-                combined_image = cv2.hconcat([loc, scores, img])
+
+                row1 = cv2.hconcat([loc, scores, scores2])
+
+                # 将第二行的三个图像合并
+                row2 = cv2.hconcat([similarity, ps_image, img])
+
+                # 最后将两行合并
+                combined_image = cv2.vconcat([row1, row2])
+                # combined_image = cv2.hconcat([loc, scores, ps_image, similarity, img])
                 
                 cv2.imwrite('results/combine/{}'.format(img_name), combined_image)
                 cv2.imwrite(save_path, img)

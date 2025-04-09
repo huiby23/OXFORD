@@ -11,6 +11,8 @@ from utils.loss import Point_Matching_Loss
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
+import random
+random.seed(1)
 from eval import Drift_rate_eval
 # torch.cuda.set_per_process_memory_fraction(0.5)
 def Args():
@@ -55,7 +57,7 @@ def main():
     # TensorBoard
     writer = SummaryWriter(log_dir=os.path.join(args.logs_path, 'logs', datetime.now().strftime('%Y-%m-%d_%H-%M-%S')))
 
-    # 预测出的相对位姿变换的list，每个元素是一个
+    # 预测出的相对位姿变换的list，长度为epoch
     est_pose_tran_list = []  
 
     #train
@@ -84,7 +86,7 @@ def main():
             total_loss += loss.item()
 
             # odometry estimation
-            _, est_translation, est_rotation = pm_loss.match(locations_map1, scores_map1, descriptors_map1, 
+            _, _, est_translation, est_rotation = pm_loss.match(locations_map1, scores_map1, descriptors_map1, 
                                                                           scores_map2, descriptors_map2,threshold=0.01)
             
             # 保存根据学习的关键点预测出的相对位姿变换
@@ -145,7 +147,7 @@ def main():
         os.makedirs(val_result_dir)
     
     drift_rate_val = Drift_rate_eval()
-    drift_rate_val(args.data_path, est_pose_tran_list, val_result_dir, epoch)
+    drift_rate_val(args.data_path, est_pose_tran_list[epoch-1], val_result_dir, epoch)
 
 
 if __name__ == '__main__':
