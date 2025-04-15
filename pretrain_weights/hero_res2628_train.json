@@ -1,0 +1,80 @@
+{
+    "model": "HERO",
+    "dataset": "oxford",
+    "data_dir": "/h/keenan/oxford-radar-robotcar-dataset/",
+    "log_dir": "/h/keenan/logs/2021-05-28/run353_res2592_window4/",
+    "gpuid": "cuda:0",
+    "radar_resolution": 0.0438,
+    "cart_resolution": 0.2628,
+    "cart_pixel_width": 640,
+    "train_split": [0, 1, 3, 4, 5, 7, 9, 11, 12, 13, 14, 15, 16, 18, 19, 21, 22, 23, 26, 27, 28, 29, 30, 31],
+    "validation_split": [25],
+    "other_split": [2, 6, 8, 10, 17, 20, 24],
+    "test_split": [25],
+    "networks": {
+        "unet": {
+            "bilinear": true,
+            "first_feature_dimension": 8,
+            "score_sigmoid": false
+        },
+        "keypoint_block": {
+            "patch_size": 32
+        },
+        "matcher_block": {
+            "softmax_temp": 0.01,
+            "sparse": false
+        }
+    },
+    "steam": {
+        "time_step": 0.25,
+        "expect_approx_opt": 0,
+        "patch_mean_thres": 0.05,
+        "mah_thres": 4,
+        "weight_matrix": true,
+        "topk_backup": 30,
+        "log_det_thres_flag": false,
+        "log_det_thres_val": 4.0,
+        "log_det_topk": 20,
+        "use_ransac": false,
+        "ransac_version": 0,
+        "use_ctsteam": false,
+        "ex_translation_vs_in_s1": [-0.99507, -0.0019, 0],
+	"ex_translation_vs_in_s": [-9.82292691e-01, 1.29373599e-02, 0.0],
+	"ex_translation_vs_in_s2": [-0.99994075, -0.00892411, -1.74819743],
+	"ex_translation_vs_in_s0": [0, 0, 0],
+	"ex_rotation_sv": [9.99984181e-01, -5.62472494e-03, 0.0,
+                           -5.62472494e-03, -9.99984181e-01, 0.0,
+                           0.0,  0.0, -1.0],
+	"ex_rotation_sv1": [1, 0, 0, 0, -1, 0, 0, 0, -1],
+	"ex_rotation_sv0": [1, 0, 0, 0, 1, 0, 0, 0, 1],
+	"zero_vel_prior": false,
+	"vel_prior": false
+    },
+    "lr": 0.00001,
+    "weight_decay": 0,
+    "optimizer": "adam",
+    "seed": 0,
+    "momentum": 0,
+    "clip_norm": 10.0,
+    "batch_size": 1,
+    "window_size": 4,
+    "num_workers": 4,
+    "max_iterations": 400000,
+    "max_epochs": 4,
+    "print_rate": 10,
+    "log_rate": 10,
+    "backup_rate": 500,
+    "save_rate": 5000,
+    "val_rate": 5000,
+    "vis_num": 6,
+    "augmentation": {
+        "rot_max": 0.26
+    },
+    "mean_mult_thres": 3.0,
+    "static_thres": 0.0,
+    "flip_y": false,
+    "qc_diag": [0.4, 0.01, 1e-4, 1e-4, 1e-4, 0.002],
+    "accumulate": 1,
+    "skip": 0,
+    "use_ins": false
+}
