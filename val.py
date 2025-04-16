@@ -1,190 +1,135 @@
-import numpy as np
 import argparse
-import torch
-import cv2
+import json
+from time import time
+import pickle
 import numpy as np
-import os
+import torch
 
-from torch.utils.data import DataLoader
-from utils.dataloader import CustomDataset
-from models.UNet import Dual_UNet
-from utils.loss import Point_Matching_Loss
-from tqdm import tqdm
-import random
-random.seed(1)
-# from error.err_eval import Drift_rate_eval
+from networks.Oxford_Radar import Oxford_Radar
+from utils.dataloader import get_dataloaders
+from utils.utils import computeMedianError, computeKittiMetrics, load_icra21_results, save_in_yeti_format_new, get_transform2
+from utils.utils import plot_sequences
 
-# torch.cuda.set_per_process_memory_fraction(0.5)
+torch.backends.cudnn.benchmark = False
+torch.backends.cudnn.enabled = True
+torch.backends.cudnn.deterministic = True
+
+def get_folder_from_file_path(path):
+    elems = path.split('/')
+    newpath = ""
+    for j in range(0, len(elems) - 1):
+        newpath += elems[j] + "/"
+    return newpath
+
 
 def Args():
-    parser = argparse.ArgumentParser(description="settings")
-    # model
-    parser.add_argument("--model_path", default="check_points/model_best.pth")
-    # dataset
-    parser.add_argument("--data_path", default='data/oxford_radar')
-    parser.add_argument("--num_keypoints", default=400, type=int)
-    parser.add_argument("--img_sz", default=448, type=int)
-    parser.add_argument("--val_save_path", default='results/val')
-    parser.add_argument("--batch_size", default=8)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', default='config/steam.json', type=str, help='config file path')
+    parser.add_argument('--pretrain', default=None, type=str, help='pretrain checkpoint path')
     args = parser.parse_args()
     return args
 
-def add_text_to_image(image, text):
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 1
-    color = (255, 255, 255)  # 白色文字
-    thickness = 2
-    position = (10, 30)  # 左上角位置
-    image_with_text = cv2.putText(image.copy(), text, position, font, font_scale, color, thickness, lineType=cv2.LINE_AA)
-    return image_with_text
 
 def main():
-    
-    #init
+    torch.set_num_threads(8)
     args = Args()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = Dual_UNet().to(device)
-    
-    model.load_state_dict(torch.load(args.model_path, map_location=torch.device("cuda" if torch.cuda.is_available() else "cpu")))
 
-    #loss
-    pm_loss = Point_Matching_Loss()
-    
-    # dataloader
-    val_set = CustomDataset(args.data_path,args.img_sz,mode="test")
-    val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=1, drop_last=False)
+    with open(args.config) as f:
+        config = json.load(f)
+    root = get_folder_from_file_path(args.pretrain)
+    seq_nums = config['test_split']
 
+    if config['model'] == 'Oxford_Radar':
+        model = Oxford_Radar(config).to(config['gpuid'])
+    assert(args.pretrain is not None)
 
-    if not os.path.exists(args.val_save_path):
-        os.makedirs(args.val_save_path)
-
-    if not os.path.exists('results/combine'):
-        os.makedirs('results/combine')
-    
-
-    # 预测出的相对位姿变换的list，长度为epoch
-    # est_pose_tran_list = []  
-
-    #train
+    checkpoint = torch.load(args.pretrain, map_location=torch.device(config['gpuid']))
+    failed = False
+    try:
+        model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+    except Exception as e:
+        print(e)
+        failed = True
+    if failed:
+        model.load_state_dict(checkpoint, strict=False)
     model.eval()
 
-    with torch.no_grad():
-        # 根据学习的关键点，预测出的相对位姿变换
-        # est_pose_tran = []
+    T_gt_ = []
+    T_pred_ = []
+    t_errs = []
+    r_errs = []
+    time_used_ = []
 
-        for batch_idx, (im1, im2, _,imgs_name) in enumerate(tqdm(val_loader, desc=f"inferencing", ncols=100)):
-            im1, im2= im1.to(device), im2.to(device)
-            im = torch.cat([im1,im2],dim=0)
-            locations_map, scores_map, descriptors_map = model(im)
-            # locations_map1, scores_map1, descriptors_map1 = locations_map[0:args.batch_size,:,:,:], scores_map[0:args.batch_size,:,:,:], descriptors_map[0:args.batch_size,:,:,:]
-            # locations_map2, scores_map2, descriptors_map2 = locations_map[args.batch_size:,:,:,:], scores_map[args.batch_size:,:,:,:], descriptors_map[args.batch_size:,:,:,:]
-            B=int(im2.shape[0])
-            locations_map1, scores_map1, descriptors_map1 = locations_map[0:B,:,:,:], scores_map[0:B,:,:,:], descriptors_map[0:B,:,:,:]
-            locations_map2, scores_map2, descriptors_map2 = locations_map[B:,:,:,:], scores_map[B:,:,:,:], descriptors_map[B:,:,:,:]
-            matched_points, S, _, _ = pm_loss.match(locations_map1, scores_map1, descriptors_map1, 
-                                                    scores_map2, descriptors_map2,threshold=0.01)
-            
-            # 保存根据学习的关键点预测出的相对位姿变换
-            # est_translation = est_translation.cpu().numpy()   # (B, 2, 2)
-            # est_rotation = est_rotation.cpu().numpy()         # (B, 2)
-
-            # est_rotation = est_rotation.reshape(-1, 2, 1)  # (B, 2, 1)
-
-            # 拼接得到完整的SE2位姿变换矩阵 (B, 2, 3)
-            # for k in range(B):
-            #     R = est_rotation[k]
-            #     T = est_translation[k]
-            #     est_pose = np.concatenate([R, T], axis=-1)  # (2, 3)
-
-            #     est_pose_tran.append(est_pose)
-            
-
-            ps= pm_loss.spatial_softmax_keypoints(locations_map1)
-            for i in range(B):
-
-                loc=locations_map1[i, 0].cpu().numpy()
-                loc = cv2.normalize(loc, None, 0, 255, cv2.NORM_MINMAX)
-                loc = (loc).astype(np.uint8)# 归一化到 0-255 范围
-                loc = cv2.cvtColor(loc, cv2.COLOR_GRAY2BGR)
-                loc = add_text_to_image(loc, 'Location 1 Map')
-                # cv2.imwrite('loc.png', loc)
-                
-                similarity=S[i, 200].cpu().numpy()
-                similarity = cv2.normalize(similarity, None, 0, 255, cv2.NORM_MINMAX)
-                similarity = (similarity).astype(np.uint8)# 归一化到 0-255 范围
-                similarity = cv2.cvtColor(similarity, cv2.COLOR_GRAY2BGR)
-                similarity = add_text_to_image(similarity, 'cos similarity Map')
-
-                ps_image = np.zeros((448,448), dtype=np.uint8)
-                # x, y = ps[i][:, 0].clamp(0, 448 - 1).long(), ps[:, 1].clamp(0, 448 - 1).long()
-                x, y = ps[i,:,0],ps[i,:,1]
-                ps_image[y.cpu().numpy().astype(int), x.cpu().numpy().astype(int)] = 255
-                ps_image = (ps_image).astype(np.uint8)
-                ps_image = cv2.cvtColor(ps_image, cv2.COLOR_GRAY2BGR)
-                ps_image = add_text_to_image(ps_image, 'ps location')
-
-
-                scores=scores_map1[i, 0].cpu().numpy()
-                # scores = (scores * 255).astype(np.uint8)  # 归一化到 0-255 范围
-                scores = cv2.normalize(scores, None, 0, 255, cv2.NORM_MINMAX)
-                scores = scores.astype(np.uint8)
-
-                scores = cv2.cvtColor(scores, cv2.COLOR_GRAY2BGR)
-                scores = add_text_to_image(scores, 'scores1 Map')
-
-                scores2=scores_map2[i, 0].cpu().numpy()
-                # scores = (scores * 255).astype(np.uint8)  # 归一化到 0-255 范围
-                scores2 = cv2.normalize(scores2, None, 0, 255, cv2.NORM_MINMAX)
-                scores2 = scores2.astype(np.uint8)
-
-                scores2 = cv2.cvtColor(scores2, cv2.COLOR_GRAY2BGR)
-                scores2 = add_text_to_image(scores2, 'scores2 Map')
-                # cv2.imwrite('scores.png', scores)
-                
-                img_name = imgs_name[i]+'.png'
-                img = im2[i, 0].cpu().numpy()  # 提取单通道图像，并转换为 NumPy
-                img = (img * 255).astype(np.uint8)  # 归一化到 0-255 范围
-                img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)  # 转换为三通道 BGR 图像
-
-                # cv2.imwrite('img.png', img)
-                
-                ps_i = np.array(matched_points[i][0].cpu())  # 提取 matched_ps
-                pd_i = np.array(matched_points[i][1].cpu())  # 提取 matched_pd
-
-                # 画匹配点
-                for (x1, y1), (x2, y2) in zip(ps_i, pd_i):
-                    cv2.circle(img, (int(x1), int(y1)), 3, (0, 255, 0), -1)  # 绿色点 (ps)
-                    cv2.circle(img, (int(x2), int(y2)), 3, (0, 0, 255), -1)  # 红色点 (pd)
-                    cv2.line(img, (int(x1), int(y1)), (int(x2), int(y2)), (255, 0, 0), 1)  # 连接线 (蓝色)
-
-                save_path = os.path.join(args.val_save_path,img_name)
-
-
-                row1 = cv2.hconcat([loc, scores, scores2])
-
-                # 将第二行的三个图像合并
-                row2 = cv2.hconcat([similarity, ps_image, img])
-
-                # 最后将两行合并
-                combined_image = cv2.vconcat([row1, row2])
-                # combined_image = cv2.hconcat([loc, scores, ps_image, similarity, img])
-                
-                cv2.imwrite('results/combine/{}'.format(img_name), combined_image)
-                cv2.imwrite(save_path, img)
-
-            # print(f"val_f1_score: {total_f1_score / total_samples}")
+    for seq_num in seq_nums:
+        time_used = []
+        T_gt = []
+        T_pred = []
+        timestamps = []
+        config['test_split'] = [seq_num]
         
-        # Save the estimated pose transformation for drift rate evaluation
-        # est_pose_tran_list.append(est_pose_tran)
- 
+        # config['dataset'] == 'oxford'
+        _, _, test_loader = get_dataloaders(config)
 
-    # ---------- drift rate evaluation ---------- 
-    # val_result_dir = os.path.join(args.model_save_path, 'train_drift_rate')
-    # if not os.path.exists(val_result_dir):
-    #     os.makedirs(val_result_dir)
-    
-    # drift_rate_val = Drift_rate_eval()
-    # drift_rate_val(args.data_path, est_pose_tran_list, val_result_dir, len(est_pose_tran_list))
+        seq_lens = test_loader.dataset.seq_lens
+        print(seq_lens)
+        seq_names = test_loader.dataset.sequences
+        print('Evaluating sequence: {} : {}'.format(seq_num, seq_names[0]))
+        for batchi, batch in enumerate(test_loader):
+            ts = time()
+            if (batchi + 1) % config['print_rate'] == 0:
+                print('Eval Batch {} / {}: {:.2}s'.format(batchi, len(test_loader), np.mean(time_used[-config['print_rate']:])))
+            with torch.no_grad():
+                try:
+                    out = model(batch)
+                except RuntimeError as e:
+                    print(e)
+                    continue
+            
+            # config['model'] == 'Oxford_Radar':
+            T_gt.append(batch['T_21'][0].numpy().squeeze())
+            R_pred_ = out['R'][0].detach().cpu().numpy().squeeze()
+            t_pred_ = out['t'][0].detach().cpu().numpy().squeeze()
+            T_pred.append(get_transform2(R_pred_, t_pred_))
+            
+            # print('T_gt:\n{}'.format(T_gt[-1]))
+            # print('T_pred:\n{}'.format(T_pred[-1]))
+            time_used.append(time() - ts)
+            if 'timestamps' in batch:
+                timestamps.append(batch['timestamps'][0].numpy())
+        
+        T_gt_.extend(T_gt)
+        T_pred_.extend(T_pred)
+        time_used_.extend(time_used)
+        t_err, r_err = computeKittiMetrics(T_gt, T_pred, [len(T_gt)])
+        
+        print('SEQ: {} : {}'.format(seq_num, seq_names[0]))
+        print('KITTI t_err: {} %'.format(t_err))
+        print('KITTI r_err: {} deg/m'.format(r_err))
+        
+        t_errs.append(t_err)
+        r_errs.append(r_err)
+
+        print(timestamps[0].shape)
+        save_in_yeti_format_new(T_gt, T_pred, [len(T_gt)], seq_names, root)
+        pickle.dump([T_gt, T_pred, timestamps], open(root + 'odom' + seq_names[0] + '.obj', 'wb'))
+        T_icra = None
+        if config['dataset'] == 'oxford':
+            if config['compare_yeti']:
+                T_icra = load_icra21_results('./results/icra21/', seq_names, seq_lens)
+        fname = root + seq_names[0] + '.pdf'
+        plot_sequences(T_gt, T_pred, [len(T_gt)], returnTensor=False, T_icra=T_icra, savePDF=True, fnames=[fname])
+
+    print('time_used: {}'.format(sum(time_used_) / len(time_used_)))
+    results = computeMedianError(T_gt_, T_pred_)
+    with open('errs.obj', 'wb') as f:
+        pickle.dump([results[-2], results[-1]], f)
+    print('dt: {} sigma_dt: {} dr: {} sigma_dr: {}'.format(results[0], results[1], results[2], results[3]))
+
+    t_err = np.mean(t_errs)
+    r_err = np.mean(r_errs)
+    print('Average KITTI metrics over all test sequences:')
+    print('KITTI t_err: {} %'.format(t_err))
+    print('KITTI r_err: {} deg/m'.format(r_err))
 
 
 

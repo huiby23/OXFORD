@@ -1,5 +1,5 @@
 {
-    "model": "UnderTheRadar",
+    "model": "Oxford_Radar",
     "dataset": "oxford",
     "data_dir": "/workspace/raid/krb/oxford-radar-robotcar-dataset/",
     "log_dir": "/workspace/Documents/logs/2021-06-22/run4-pre/",

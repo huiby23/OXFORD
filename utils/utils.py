@@ -1,7 +1,13 @@
-import pickle
-import numpy as np
+import io
 import torch
-import torch.nn.functional as F
+import pickle
+import PIL.Image
+import numpy as np
+import matplotlib
+import matplotlib.pyplot as plt
+import torchvision.utils as vutils
+from torchvision.transforms import ToTensor
+
 
 def get_inverse_tf(T):
     """Returns the inverse of a given 4x4 homogeneous transform.
@@ -16,6 +22,7 @@ def get_inverse_tf(T):
     T2[0:3, 0:3] = R.transpose()
     T2[0:3, 3:] = np.matmul(-1 * R.transpose(), t)
     return T2
+
 
 def get_transform(x, y, theta):
     """Returns a 4x4 homogeneous 3D transform for a given 2D (x, y, theta).
@@ -32,6 +39,7 @@ def get_transform(x, y, theta):
     T[1, 3] = y
     return T
 
+
 def get_transform2(R, t):
     """Returns a 4x4 homogeneous 3D transform
     Args:
@@ -44,6 +52,7 @@ def get_transform2(R, t):
     T[0:3, 0:3] = R
     T[0:3, 3] = t.squeeze()
     return T
+
 
 def enforce_orthog(T, dim=3):
     """Enforces orthogonality of a 3x3 rotation matrix within a 4x4 homogeneous transformation matrix.
@@ -85,79 +94,6 @@ def enforce_orthog(T, dim=3):
         T[0:3, 2] = c2
     return T
 
-def carrot(xbar):
-    """Overloaded operator. converts 3x1 vectors into a member of Lie Alebra so(3)
-        Also, converts 6x1 vectors into a member of Lie Algebra se(3)
-    Args:
-        xbar (np.ndarray): if 3x1, xbar is a vector of rotation angles, if 6x1 a vector of 3 trans and 3 rot angles.
-    Returns:
-        np.ndarray: Lie Algebra 3x3 matrix so(3) if input 3x1, 4x4 matrix se(3) if input 6x1.
-    """
-    x = xbar.squeeze()
-    if x.shape[0] == 3:
-        return np.array([[0, -x[2], x[1]],
-                         [x[2], 0, -x[0]],
-                         [-x[1], x[0], 0]])
-    elif x.shape[0] == 6:
-        return np.array([[0, -x[5], x[4], x[0]],
-                         [x[5], 0, -x[3], x[1]],
-                         [-x[4], x[3], 0, x[2]],
-                         [0, 0, 0, 1]])
-    print('WARNING: attempted carrot operator on invalid vector shape')
-    return xbar
-
-def se3ToSE3(xi):
-    """Converts 6x1 vectors representing the Lie Algebra, se(3) into a 4x4 homogeneous transform in SE(3)
-        Lie Vector xi = [rho, phi]^T (6 x 1) --> SE(3) T = [C, r; 0 0 0 1] (4 x 4)
-    Args:
-        xi (np.ndarray): 6x1 vector
-    Returns:
-        np.ndarray: 4x4 transformation matrix
-    """
-    T = np.identity(4, dtype=np.float32)
-    rho = xi[0:3].reshape(3, 1)
-    phibar = xi[3:6].reshape(3, 1)
-    phi = np.linalg.norm(phibar)
-    R = np.identity(3)
-    if phi != 0:
-        phibar /= phi  # normalize
-        I = np.identity(3)
-        R = np.cos(phi) * I + (1 - np.cos(phi)) * phibar @ phibar.T + np.sin(phi) * carrot(phibar)
-        J = I * np.sin(phi) / phi + (1 - np.sin(phi) / phi) * phibar @ phibar.T + \
-            carrot(phibar) * (1 - np.cos(phi)) / phi
-        rho = J @ rho
-    T[0:3, 0:3] = R
-    T[0:3, 3:] = rho
-    return T
-
-def SE3tose3(T):
-    """Converts 4x4 homogeneous transforms in SE(3) to 6x1 vectors representing the Lie Algebra, se(3)
-        SE(3) T = [C, r; 0 0 0 1] (4 x 4) --> Lie Vector xi = [rho, phi]^T (6 x 1)
-    Args:
-        T (np.ndarray): 4x4 transformation matrix
-    Returns:
-        np.ndarray: 6x1 vector
-    """
-    R = T[0:3, 0:3]
-    evals, evecs = np.linalg.eig(R)
-    idx = -1
-    for i in range(3):
-        if evals[i].real != 0 and evals[i].imag == 0:
-            idx = i
-            break
-    assert(idx != -1)
-    abar = evecs[idx].real.reshape(3, 1)
-    phi = np.arccos((np.trace(R) - 1) / 2)
-    rho = T[0:3, 3:]
-    if phi != 0:
-        I = np.identity(3)
-        J = I * np.sin(phi) / phi + (1 - np.sin(phi) / phi) * abar @ abar.T + \
-            carrot(abar) * (1 - np.cos(phi)) / phi
-        rho = np.linalg.inv(J) @ rho
-    xi = np.zeros((6, 1))
-    xi[0:3, 0:] = rho
-    xi[3:, 0:] = phi * abar
-    return xi
 
 def rotationError(T):
     """Calculates a single rotation value corresponding to the upper-left 3x3 rotation matrix.
@@ -170,6 +106,7 @@ def rotationError(T):
     d = 0.5 * (np.trace(T[0:3, 0:3]) - 1)
     return np.arccos(max(min(d, 1.0), -1.0))
 
+
 def translationError(T, dim=2):
     """Calculates a euclidean distance corresponding to the translation vector within a 4x4 transform.
     Args:
@@ -181,6 +118,7 @@ def translationError(T, dim=2):
     if dim == 2:
         return np.sqrt(T[0, 3]**2 + T[1, 3]**2)
     return np.sqrt(T[0, 3]**2 + T[1, 3]**2 + T[2, 3]**2)
+
 
 def computeMedianError(T_gt, T_pred):
     """Computes the median translation and rotation errors along with their standard deviations.
@@ -208,6 +146,7 @@ def computeMedianError(T_gt, T_pred):
     return [np.median(t_error), np.std(t_error), np.median(r_error), np.std(r_error), np.mean(t_error),
             np.mean(r_error), t_error, r_error]
 
+
 def trajectoryDistances(poses):
     """Calculates path length along the trajectory.
     Args:
@@ -224,6 +163,7 @@ def trajectoryDistances(poses):
         dist.append(dist[i-1] + np.sqrt(dx**2 + dy**2))
     return dist
 
+
 def lastFrameFromSegmentLength(dist, first_frame, length):
     """Retrieves the index of the last frame for our current analysis.
         last_frame should be 'dist' meters away from first_frame in terms of distance traveled along the trajectory.
@@ -238,6 +178,7 @@ def lastFrameFromSegmentLength(dist, first_frame, length):
         if dist[i] > dist[first_frame] + length:
             return i
     return -1
+
 
 def calcSequenceErrors(poses_gt, poses_pred):
     """Calculate the translation and rotation error for each subsequence across several different lengths.
@@ -270,6 +211,7 @@ def calcSequenceErrors(poses_gt, poses_pred):
             err.append([first_frame, r_err/float(length), t_err/float(length), length, speed])
     return err
 
+
 def getStats(err):
     """Computes the average translation and rotation within a sequence (across subsequences of diff lengths)."""
     t_err = 0
@@ -280,6 +222,7 @@ def getStats(err):
     t_err /= float(len(err))
     r_err /= float(len(err))
     return t_err, r_err
+
 
 def computeKittiMetrics(T_gt, T_pred, seq_lens):
     """Computes the translational (%) and rotational drift (deg/m) in the KITTI style.
@@ -320,11 +263,14 @@ def computeKittiMetrics(T_gt, T_pred, seq_lens):
     r_err = avg[1]
     return t_err * 100, r_err * 180 / np.pi
 
+
 def saveKittiErrors(err, fname):
     pickle.dump(err, open(fname, 'wb'))
 
+
 def loadKittiErrors(fname):
     return pickle.load(open(fname, 'rb'))
+
 
 def save_in_yeti_format(T_gt, T_pred, timestamps, seq_lens, seq_names, root='./'):
     """This function converts outputs to a file format that is backwards compatible with the yeti repository.
@@ -355,6 +301,7 @@ def save_in_yeti_format(T_gt, T_pred, timestamps, seq_lens, seq_names, root='./'
                 f.write('{},{},{},{},{},{},{},{}\n'.format(t[0, 0], t[1, 0], yaw, T[0, 3], T[1, 3], gtyaw,
                                                            timestamps[i][0], timestamps[i][1]))
 
+
 def save_in_yeti_format_new(T_gt, T_pred, seq_lens, seq_names, root='./'):
     """This function converts outputs to a file format that is backwards compatible with the yeti repository.
     Args:
@@ -383,6 +330,7 @@ def save_in_yeti_format_new(T_gt, T_pred, seq_lens, seq_names, root='./'):
                 T = get_inverse_tf(T_gt[i])
                 f.write('{},{},{},{},{},{},{},{}\n'.format(t[0, 0], t[1, 0], yaw, T[0, 3], T[1, 3], gtyaw,
                                                            f'img{i}', f'img{i+1}'))
+
 
 def load_icra21_results(results_loc, seq_names, seq_lens):
     """Loads ICRA 2021 results for MC-RANSAC (Burnett et al.) on the Oxford Radar Dataset.
@@ -413,6 +361,7 @@ def load_icra21_results(results_loc, seq_names, seq_lens):
                 count += 1
     return T_icra
 
+
 def normalize_coords(coords_2D, width, height):
     """Normalizes coords_2D (BW x N x 2) in pixel coordinates to be within [-1, 1]
     Args:
@@ -426,6 +375,7 @@ def normalize_coords(coords_2D, width, height):
     u_norm = (2 * coords_2D[:, :, 0].reshape(batch_size, -1) / (width - 1)) - 1
     v_norm = (2 * coords_2D[:, :, 1].reshape(batch_size, -1) / (height - 1)) - 1
     return torch.stack([u_norm, v_norm], dim=2)  # BW x num_patches x 2
+
 
 def convert_to_radar_frame(pixel_coords, config):
     """Converts pixel_coords (B x N x 2) from pixel coordinates to metric coordinates in the radar frame.
@@ -442,14 +392,15 @@ def convert_to_radar_frame(pixel_coords, config):
         cart_min_range = (cart_pixel_width / 2 - 0.5) * cart_resolution
     else:
         cart_min_range = cart_pixel_width // 2 * cart_resolution
-    B, N, _ = pixel_coords.size()
+    B, N, _ = pixel_coords.size()   # (u, v)
     R = torch.tensor([[0, -cart_resolution], [cart_resolution, 0]]).expand(B, 2, 2).to(gpuid)
     t = torch.tensor([[cart_min_range], [-cart_min_range]]).expand(B, 2, N).to(gpuid)
-    return (torch.bmm(R, pixel_coords.transpose(2, 1)) + t).transpose(2, 1)
+    return (torch.bmm(R, pixel_coords.transpose(2, 1)) + t).transpose(2, 1)     # (x, y)
+
 
 def get_indices(batch_size, window_size):
     """Retrieves batch indices for for source and target frames.
-       This is intended to be used with the UnderTheRadar model.
+       This is intended to be used with the Oxford_Radar model.
     """
     src_ids = []
     tgt_ids = []
@@ -458,28 +409,12 @@ def get_indices(batch_size, window_size):
             idx = i * window_size + j
             src_ids.append(idx)
             tgt_ids.append(idx + 1)
-    return src_ids, tgt_ids
 
-def get_indices2(batch_size, window_size, asTensor=False):
-    """Retrieves batch indices for for source and target frames.
-       This is intended to be used with the HERO model.
-    """
-    src_ids = []
-    tgt_ids = []
-    for i in range(batch_size):
-        idx = i * window_size
-        for j in range(idx + 1, idx + window_size):
-            tgt_ids.append(j)
-            src_ids.append(idx)
-    if asTensor:
-        src_ids = np.asarray(src_ids, dtype=np.int64)
-        tgt_ids = np.asarray(tgt_ids, dtype=np.int64)
-        return torch.from_numpy(src_ids), torch.from_numpy(tgt_ids)
-    return src_ids, tgt_ids
 
 def get_lr(optimizer):
     for param_group in optimizer.param_groups:
         return param_group['lr']
+
 
 def get_T_ba(out, a, b):
     """Retrieves the transformation matrix from a to b given the output of the DNN.
@@ -497,6 +432,7 @@ def get_T_ba(out, a, b):
     T_a0[:3, :3] = out['R'][0, a].detach().cpu().numpy()
     T_a0[:3, 3:4] = out['t'][0, a].detach().cpu().numpy()
     return np.matmul(T_b0, get_inverse_tf(T_a0))
+
 
 def convert_to_weight_matrix(w, window_id, T_aug=[]):
     """This function converts the S-dimensional weights estimated for each keypoint into
@@ -546,20 +482,6 @@ def convert_to_weight_matrix(w, window_id, T_aug=[]):
 
     return A, d
 
-def mask_intensity_filter(data, patch_size, patch_mean_thres=0.05):
-    """Given a cartesian mask of likely target pixels (data), this function computes the percentage of
-        likely target pixels in a given square match of the input. The output is a list of booleans indicate whether
-        each patch either has more (True) or less (False) % likely target pixels than the patch_mean_thres.
-    Args:
-        data (torch.tensor): input 2D binary mask (b*w, 1, H, W)
-        patch_size (int): size of patches in pixels
-        patch_mean_thres (float): ratio of pixels within a patch that need to be 1 for it to be kept
-    Returns:
-        torch.tensor: (b*w,1,num_patches) for each patch, 0 == reject, 1 == keep
-    """
-    int_patches = F.unfold(data, kernel_size=patch_size, stride=patch_size)
-    keypoint_int = torch.mean(int_patches, dim=1, keepdim=True)  # BW x 1 x num_patches
-    return keypoint_int >= patch_mean_thres
 
 def wrapto2pi(phi):
     """Ensures that the output angle phi is within the interval [0, 2*pi)"""
@@ -568,6 +490,7 @@ def wrapto2pi(phi):
     elif phi >= 2 * np.pi:
         return (phi / (2 * np.pi) % 1) * 2 * np.pi
     return phi
+
 
 def getApproxTimeStamps(points, times, flip_y=False):
     """Retrieves the approximate timestamp of each target point.
@@ -602,6 +525,7 @@ def getApproxTimeStamps(points, times, flip_y=False):
         timestamps.append(np.array(point_times))
     return timestamps
 
+
 def undistort_pointcloud(points, point_times, t_refs, solver):
     """Removes motion distortion from pointclouds.
     Args:
@@ -622,3 +546,283 @@ def undistort_pointcloud(points, point_times, t_refs, solver):
             p[j, :] = pbar[:]
         points[i] = p
     return points
+
+
+
+# visualization functions
+def convert_plt_to_img():
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    plt.close()
+    buf.seek(0)
+    return PIL.Image.open(buf)
+
+
+def convert_plt_to_tensor():
+    return ToTensor()(convert_plt_to_img())
+
+
+def draw_batch(batch, out, config):
+    """Creates an image of the radar scan, scores, and keypoint matches for a single batch."""
+    # Draw radar image
+    radar = batch['data'][0].squeeze().numpy()
+    plt.subplots()
+    plt.imshow(radar, cmap='gray')
+    radar_img = convert_plt_to_tensor()
+
+    # Draw keypoint matches
+    src = out['src'][0].squeeze().detach().cpu().numpy()
+    tgt = out['tgt'][0].squeeze().detach().cpu().numpy()
+    match_weights = out['match_weights'][0].squeeze().detach().cpu().numpy()
+
+    nms = config['vis_keypoint_nms']
+    max_w = np.max(match_weights)
+    plt.imshow(radar, cmap='gray')
+    for i in range(src.shape[0]):
+        if match_weights[i] < nms * max_w:
+            continue
+        plt.plot([src[i, 0], tgt[i, 0]], [src[i, 1], tgt[i, 1]], c='w', linewidth=2, zorder=2)
+        plt.scatter(src[i, 0], src[i, 1], c='g', s=5, zorder=3)
+        plt.scatter(tgt[i, 0], tgt[i, 1], c='r', s=5, zorder=4)
+    match_img = convert_plt_to_tensor()
+
+    # Draw scores
+    scores = out['scores'][0].squeeze().detach().cpu().numpy()
+    plt.subplots()
+    plt.imshow(scores, cmap='inferno')
+    score_img = convert_plt_to_tensor()
+
+    return vutils.make_grid([radar_img, score_img, match_img])
+
+
+def draw_matches(batch, out, config, solver):
+    azimuth_step = (2 * np.pi) / 400
+    cart_pixel_width = config['cart_pixel_width']
+    cart_resolution = config['cart_resolution']
+    if (cart_pixel_width % 2) == 0:
+        cart_min_range = (cart_pixel_width / 2 - 0.5) * cart_resolution
+    else:
+        cart_min_range = cart_pixel_width // 2 * cart_resolution
+    T_met_pix = np.array([[0, -cart_resolution, 0, cart_min_range],
+                          [cart_resolution, 0, 0, -cart_min_range],
+                          [0, 0, 1, 0],
+                          [0, 0, 0, 1]])
+    T_pix_met = np.linalg.inv(T_met_pix)
+
+    keypoint_ints = out['keypoint_ints']
+    ids = torch.nonzero(keypoint_ints[0, 0] > 0, as_tuple=False).squeeze(1)
+    src = out['src_rc'][0, ids].squeeze().detach().cpu().numpy()
+    tgt = out['tgt_rc'][0, ids].squeeze().detach().cpu().numpy()
+    radar = batch['data'][0].squeeze().numpy()
+    _, axs = plt.subplots(1, 3, tight_layout=True)
+    # Raw locations overlayed, no transforms
+    axs[0].imshow(radar, cmap='gray', extent=(0, 640, 640, 0), interpolation='none')
+    axs[0].set_axis_off()
+    axs[0].set_title('raw')
+    for i in range(src.shape[0]):
+        axs[0].plot([src[i, 0], tgt[i, 0]], [src[i, 1], tgt[i, 1]], c='w', linewidth=1, zorder=2)
+        axs[0].scatter(src[i, 0], src[i, 1], c='limegreen', s=2, zorder=3)
+        axs[0].scatter(tgt[i, 0], tgt[i, 1], c='r', s=2, zorder=4)
+
+    src = out['src'][0, ids].squeeze().detach().cpu().numpy()
+    tgt = out['tgt'][0, ids].squeeze().detach().cpu().numpy()
+    # Use Rigid Transform
+    axs[1].imshow(radar, cmap='gray', extent=(0, 640, 640, 0), interpolation='none')
+    axs[1].set_axis_off()
+    axs[1].set_title('rigid')
+    T_tgt_src = get_T_ba(out, a=0, b=1)
+    error = np.zeros((src.shape[0], 2))
+    for i in range(src.shape[0]):
+        x1 = np.array([src[i, 0], src[i, 1], 0, 1]).reshape(4, 1)
+        x2 = np.array([tgt[i, 0], tgt[i, 1], 0, 1]).reshape(4, 1)
+        x1 = T_tgt_src @ x1
+        e = x1 - x2
+        error[i, 1] = np.sqrt(e.T @ e)
+        error[i, 0] = int(wrapto2pi(np.arctan2(x2[1, 0], x2[0, 0])) // azimuth_step)
+        x1 = T_pix_met @ x1
+        x2 = T_pix_met @ x2
+        axs[1].plot([x1[0, 0], x2[0, 0]], [x1[1, 0], x2[1, 0]], c='w', linewidth=1, zorder=2)
+        axs[1].scatter(x1[0, 0], x1[1, 0], c='limegreen', s=2, zorder=3)
+        axs[1].scatter(x2[0, 0], x2[1, 0], c='r', s=2, zorder=4)
+
+    # Use Interpolated Poses
+    t1 = batch['timestamps'][0].numpy().squeeze()
+    t2 = batch['timestamps'][1].numpy().squeeze()
+    times1 = getApproxTimeStamps([src], [t1])[0]
+    times2 = getApproxTimeStamps([tgt], [t2])[0]
+    t_refs = batch['t_ref'].numpy()
+
+    T_1a = np.identity(4, dtype=np.float32)
+    T_1b = np.identity(4, dtype=np.float32)
+    axs[2].imshow(radar, cmap='gray', extent=(0, 640, 640, 0), interpolation='none')
+    axs[2].set_axis_off()
+    axs[2].set_title('interp')
+    error2 = np.zeros((src.shape[0], 2))
+    for i in range(src.shape[0]):
+        solver.getPoseBetweenTimes(T_1a, times1[i], t_refs[1, 0, 0])
+        solver.getPoseBetweenTimes(T_1b, times2[i], t_refs[1, 0, 0])
+        x1 = np.array([src[i, 0], src[i, 1], 0, 1]).reshape(4, 1)
+        x2 = np.array([tgt[i, 0], tgt[i, 1], 0, 1]).reshape(4, 1)
+        x1 = T_1a @ x1
+        x2 = T_1b @ x2
+        e = x1 - x2
+        error2[i, 1] = np.sqrt(e.T @ e)
+        error2[i, 0] = int(wrapto2pi(np.arctan2(x2[1, 0], x2[0, 0])) // azimuth_step)
+        x1 = T_pix_met @ x1
+        x2 = T_pix_met @ x2
+        axs[2].plot([x1[0, 0], x2[0, 0]], [x1[1, 0], x2[1, 0]], c='w', linewidth=1, zorder=2)
+        axs[2].scatter(x1[0, 0], x1[1, 0], c='limegreen', s=2, zorder=3)
+        axs[2].scatter(x2[0, 0], x2[1, 0], c='r', s=2, zorder=4)
+
+    plt.savefig('matches.pdf', bbox_inches='tight', pad_inches=0.0)
+    plt.figure()
+
+    idx = np.argsort(error[:, 0])
+    error = error[idx, :]
+    idx = np.argsort(error2[:, 0])
+    error2 = error2[idx, :]
+    plt.plot(error[:, 0], error[:, 1], color='b', label='raw error', linewidth=1)
+    plt.plot(error2[:, 0], error2[:, 1], color='r', label='interp error', linewidth=1)
+    plt.title('raw error')
+    plt.legend()
+    plt.savefig('matches2.pdf', bbox_inches='tight', pad_inches=0.0)
+
+
+def draw_batch_steam(batch, out, config):
+    """Creates an image of the radar scan, scores, and keypoint matches for a single batch."""
+    # Draw radar image
+    radar = batch['data'][0].squeeze().numpy()
+    radar_tgt = batch['data'][-1].squeeze().numpy()
+    plt.imshow(np.concatenate((radar, radar_tgt), axis=1), cmap='gray')
+    plt.title('radar src-tgt pair')
+    radar_img = convert_plt_to_tensor()
+
+    # Draw keypoint matches
+    src = out['src_rc'][-1].squeeze().detach().cpu().numpy()
+    tgt = out['tgt_rc'][-1].squeeze().detach().cpu().numpy()
+    keypoint_ints = out['keypoint_ints']
+
+    ids = torch.nonzero(keypoint_ints[-1, 0] > 0, as_tuple=False).squeeze(1)
+    ids_cpu = ids.cpu()
+
+    plt.imshow(np.concatenate((radar, radar_tgt), axis=1), cmap='gray')
+    delta = radar.shape[1]
+    for i in range(src.shape[0]):
+        if i in ids_cpu:
+            custom_colour = 'g'
+            plt.plot([src[i, 0], tgt[i, 0] + delta], [src[i, 1], tgt[i, 1]], c='y', linewidth=0.5, zorder=2)
+            plt.scatter(src[i, 0], src[i, 1], c=custom_colour, s=5, zorder=3)
+            plt.scatter(tgt[i, 0] + delta, tgt[i, 1], c=custom_colour, s=5, zorder=4)
+    plt.title('matches')
+    match_img = convert_plt_to_tensor()
+
+    plt.imshow(np.concatenate((radar, radar_tgt), axis=0), cmap='gray')
+    delta = radar.shape[1]
+    for i in range(src.shape[0]):
+        if i in ids_cpu:
+            custom_colour = 'g'
+            plt.plot([src[i, 0], tgt[i, 0]], [src[i, 1], tgt[i, 1] + delta], c='y', linewidth=0.5, zorder=2)
+            plt.scatter(src[i, 0], src[i, 1], c=custom_colour, s=5, zorder=3)
+            plt.scatter(tgt[i, 0], tgt[i, 1] + delta, c=custom_colour, s=5, zorder=4)
+    plt.title('matches')
+    match_img2 = convert_plt_to_tensor()
+
+    # Draw scores
+    scores = out['scores'][-1]
+    if scores.size(0) == 3:
+        scores = scores[1] + scores[2]
+    scores = scores.squeeze().detach().cpu().numpy()
+    plt.imshow(scores, cmap='inferno')
+    plt.colorbar()
+    plt.title('log det weight (weight score vis)')
+    score_img = convert_plt_to_tensor()
+
+    # Draw detector scores
+    detector_scores = out['detector_scores'][-1].squeeze().detach().cpu().numpy()
+    plt.imshow(detector_scores, cmap='inferno')
+    plt.colorbar()
+    plt.title('detector score')
+    dscore_img = convert_plt_to_tensor()
+
+    # Draw point-to-point error
+    src_p = out['src'][-1].squeeze().T
+    tgt_p = out['tgt'][-1].squeeze().T
+    R_tgt_src = out['R'][0, -1, :2, :2]
+    t_st_in_t = out['t'][0, -1, :2, :]
+    error = tgt_p - (R_tgt_src @ src_p + t_st_in_t)
+    error2_sqrt = torch.sqrt(torch.sum(error * error, dim=0).squeeze())
+    error2_sqrt = error2_sqrt[ids_cpu].detach().cpu().numpy()
+
+    plt.imshow(radar, cmap='gray')
+    plt.scatter(src[ids_cpu, 0], src[ids_cpu, 1], c=error2_sqrt, s=5, zorder=2, cmap='rainbow')
+    plt.clim(0.0, 1)
+    plt.colorbar()
+    plt.title('P2P error')
+    p2p_img = convert_plt_to_tensor()
+
+    return vutils.make_grid([dscore_img, score_img, radar_img]), vutils.make_grid([match_img, match_img2]), \
+        vutils.make_grid([p2p_img])
+
+
+def plot_sequences(T_gt, T_pred, seq_lens, returnTensor=True, T_icra=None, savePDF=False, fnames=None, flip=True):
+    """Creates a top-down plot of the predicted odometry results vs. ground truth."""
+    seq_indices = []
+    idx = 0
+    for s in seq_lens:
+        seq_indices.append(list(range(idx, idx + s - 1)))
+        idx += (s - 1)
+
+    matplotlib.rcParams.update({'font.size': 16, 'xtick.labelsize': 16, 'ytick.labelsize': 16,
+                                'axes.linewidth': 1.5, 'font.family': 'serif', 'pdf.fonttype': 42})
+    T_flip = np.identity(4)
+    T_flip[1, 1] = -1
+    T_flip[2, 2] = -1
+    imgs = []
+    for seq_i, indices in enumerate(seq_indices):
+        T_gt_ = np.identity(4)
+        T_pred_ = np.identity(4)
+        T_icra_ = np.identity(4)
+        if flip:
+            T_gt_ = np.matmul(T_flip, T_gt_)
+            T_pred_ = np.matmul(T_flip, T_pred_)
+        x_gt = []
+        y_gt = []
+        x_pred = []
+        y_pred = []
+        x_icra = []
+        y_icra = []
+        for i in indices:
+            T_gt_ = np.matmul(T_gt[i], T_gt_)
+            T_pred_ = np.matmul(T_pred[i], T_pred_)
+            enforce_orthog(T_gt_)
+            enforce_orthog(T_pred_)
+            T_gt_temp = get_inverse_tf(T_gt_)
+            T_pred_temp = get_inverse_tf(T_pred_)
+            x_gt.append(T_gt_temp[0, 3])
+            y_gt.append(T_gt_temp[1, 3])
+            x_pred.append(T_pred_temp[0, 3])
+            y_pred.append(T_pred_temp[1, 3])
+            if T_icra is not None:
+                T_icra_ = np.matmul(T_icra[i], T_icra_)
+                enforce_orthog(T_icra_)
+                T_icra_temp = get_inverse_tf(T_icra_)
+                x_icra.append(T_icra_temp[0, 3])
+                y_icra.append(T_icra_temp[1, 3])
+
+        plt.figure(figsize=(10, 10), tight_layout=True)
+        plt.grid(color='k', which='both', linestyle='--', alpha=0.75, dashes=(8.5, 8.5))
+        plt.axes().set_aspect('equal')
+        plt.plot(x_gt, y_gt, 'k', linewidth=2.5, label='GT')
+        if x_icra and y_icra:
+            plt.plot(x_icra, y_icra, 'r', linewidth=2.5, label='MC-RANSAC')
+        plt.plot(x_pred, y_pred, 'b', linewidth=2.5, label='HERO')
+        plt.xlabel('x (m)', fontsize=16)
+        plt.ylabel('y (m)', fontsize=16)
+        plt.legend(loc="upper left", edgecolor='k', fancybox=False)
+        if savePDF and fnames is not None:
+            plt.savefig(fnames[seq_i], bbox_inches='tight', pad_inches=0.0)
+        if returnTensor:
+            imgs.append(convert_plt_to_tensor())
+        else:
+            imgs.append(convert_plt_to_img())
+    return imgs

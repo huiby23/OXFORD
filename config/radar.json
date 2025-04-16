@@ -1,17 +1,32 @@
 {
-    "model": "UnderTheRadar",
+    "gpuid": "cuda:0",
+    "model": "Oxford_Radar",
+    
+    "max_epochs": 400,
+    "lr": 0.00001,
+    "max_iterations": 300000,
+    "augmentation": {
+        "rot_max": 0.26
+    },
+
     "dataset": "oxford",
     "dataset_prefix": "2019",
-    "data_dir": "/teams/ius_1663576043/hby/slam/wyc/hero_radar_odometry/dataset/sample_medium/",
-    "log_dir": "/teams/ius_1663576043/hby/slam/wyc/hero_radar_odometry/logs/2025-04-10/run24_l1_loss_kaiming_both_masks/",
-    "gpuid": "cuda:0",
+    "data_dir": "/teams/ius_1663576043/hby/slam/wyc/OXFORD_hero/dataset/sample_medium/",
+    "log_dir": "/teams/ius_1663576043/hby/slam/wyc/OXFORD_hero/logs/",
+    "train_split": [0],
+    "validation_split": [0],
+    "test_split": [0], 
+    
     "radar_resolution": 0.0432,
     "cart_resolution": 0.25,
     "cart_pixel_width": 448,
     "polar_mask": false,
-    "train_split": [0],
-    "validation_split": [0],
-    "test_split": [0],    
+
+    
+    "batch_size": 2,
+    "window_size": 2,
+    "num_workers": 4,
+       
     "networks": {
         "unet": {
             "bilinear": true,
@@ -23,21 +38,20 @@
         },
         "matcher_block": {
             "softmax_temp": 0.01,
-            "score_comp": true
+            "spars": false
+        },
+        "svd_block": {
+            "linalg_svd": true
         }
     },
+
     "steam": {
         "ex_translation_vs_in_s": [-9.82292691e-01, 1.29373599e-02, 0.0],
         "ex_rotation_sv": [9.99984181e-01, -5.62472494e-03, 0.0,
                            -5.62472494e-03, -9.99984181e-01, 0.0,
                            0.0,  0.0, -1.0]
-    },
-    "lr": 0.00001,
-    "batch_size": 2,
-    "window_size": 2,
-    "num_workers": 4,
-    "max_iterations": 300000,
-    "max_epochs": 4,
+    },    
+
     "print_rate": 10,
     "log_rate": 10,
     "backup_rate": 500,
@@ -45,9 +59,6 @@
     "val_rate": 5000,
     "vis_num": 5,
     "vis_keypoint_nms": 0.01,
-    "augmentation": {
-        "rot_max": 0.26
-    },
-    "use_ins": false,
+
     "compare_yeti": false
 }

@@ -11,14 +11,14 @@ from torch.utils.data import Dataset
 from torchvision import transforms
 from torch.utils.data import Dataset, DataLoader
 from radar.radar_sampler import RandomWindowBatchSampler, SequentialWindowBatchSampler
-from utils.utils import get_inverse_tf
+
 
 class Radar_Data_Preprocess():
-    def __init__(self, dataset_dir):
-        self.dataset_dir = dataset_dir
+    def __init__(self):
+        pass
   
 
-    def radar_img_loader(self, display_time = 10, cart_width = 448):
+    def radar_img_loader(self, dataset_dir, display_time = 10, cart_width = 448):
         """
         Function:
             - 加载radar扫描数据，并显示输出
@@ -33,7 +33,7 @@ class Radar_Data_Preprocess():
             - cart_data_list: 存储笛卡尔坐标系数据的列表，每个元素是一个笛卡尔坐标图像 (np.ndarray)
             - radar_timestamps: radar扫描数据的source timestamp序列       
         """
-        radar_data_dir = os.path.join(str(self.dataset_dir), 'radar')
+        radar_data_dir = os.path.join(str(dataset_dir), 'radar')
 
         # 判断radar扫描数据文件路径是否存在
         if not os.path.exists(radar_data_dir):
@@ -235,50 +235,6 @@ class Radar_Data_Preprocess():
         return cart_img
 
 
-    def road_odometry_loader(self):
-        """
-        Function:
-            - 加载gt数据，计算SE(2)位姿变换矩阵
-        
-        Args:
-            - None
-
-        Returns:
-            - pose_tran: SE(2)位姿变换矩阵序列
-            - total_radar_timestamps: radar扫描数据的source timestamp序列
-        """
-        gt_dir = os.path.join(str(self.dataset_dir), 'gt', 'radar_odometry.csv')
-        required_columns = ['source_timestamp', 'destination_timestamp', 'x', 'y', 'yaw', 
-                            'source_radar_timestamp', 'destination_radar_timestamp']
-        
-        # 读取数据
-        data = pd.read_csv(gt_dir)
-
-        # 验证数据完整性
-        assert all(col in data.columns for col in required_columns), f"数据文件缺少必要列: {required_columns}"
-
-
-        # 初始化轨迹参数
-        pose_tran = []
-        global_pose = np.eye(3)
-        trajectory = [global_pose[:2, 2]]  # 初始位置
-
-        # 执行位姿积分
-        for _, row in data.iterrows():
-            rel_pose = self.se2_transform(row['x'], row['y'], row['yaw'])
-            pose_tran.append(rel_pose)
-
-            global_pose = global_pose @ rel_pose
-            trajectory.append(global_pose[:2, 2])
-
-        trajectory = np.array(trajectory)
-
-        # 生成所有radar扫描时间戳序列，以及中心时刻序列
-        total_radar_timestamps = data['source_radar_timestamp'].to_numpy()
-
-        return pose_tran, total_radar_timestamps
-
-
     def se2_transform(self, x, y, yaw):
         """
         Function:
@@ -319,27 +275,19 @@ class Radar_Data_Preprocess():
         ])
 
 
-    def delete_files_in_folder(self, folder_path):
-        """
-        Function:
-            - 删除目标文件夹下的所有文件和子文件夹，但是保留目标文件夹
-        
+    def get_inverse_tf(T):
+        """Returns the inverse of a given 4x4 homogeneous transform.
         Args:
-            - folder_path: 目标文件夹
+            T (np.ndarray): 4x4 transformation matrix
+        Returns:
+            np.ndarray: inv(T)
         """
-        # 遍历文件夹中的所有文件和子文件夹
-        for filename in os.listdir(folder_path):
-            file_path = os.path.join(folder_path, filename)
-            
-            try:
-                # 如果是文件或符号链接，则删除
-                if os.path.isfile(file_path) or os.path.islink(file_path):
-                    os.unlink(file_path)  # 删除文件或符号链接
-                # 如果是子文件夹，则递归删除其内容
-                elif os.path.isdir(file_path):
-                    shutil.rmtree(file_path)  # 删除子文件夹及其内容
-            except Exception as e:
-                print(f"Failed to delete {file_path}. Reason: {e}")
+        T2 = np.identity(4, dtype=np.float32)
+        R = T[0:3, 0:3]
+        t = T[0:3, 3].reshape(3, 1)
+        T2[0:3, 0:3] = R.transpose()
+        T2[0:3, 3:] = np.matmul(-1 * R.transpose(), t)
+        return T2
 
 
     def get_sequences(path, prefix='2019'):
@@ -387,94 +335,13 @@ class Radar_Data_Preprocess():
         return mask
     
 
-    def main(self, train_data_dir, radar_display_time = 10, cart_width = 448):
-        """
-        Function:
-            - 主函数，可以从dataset提取radar扫描图像和gt数据，生成训练数据
-        
-        Args:
-            - train_data_dir: 保存训练数据的文件路径
-            - radar_display_time: 每一帧radar扫描图像的输出持续时间(ms)
-        
-        Notes:
-            - 输出radar扫描图像时，按Esc可以退出图片输出，执行剩余代码
-            - 但是提前退出会导致只有部分图片被读取，建议减小radar_display_time以代替
-        """
-        # polar_data: 存储极坐标系数据的列表，每个元素是一个元组 (timestamps, azimuths, valid, fft_data, radar_resolution)
-        # cart_data: 存储笛卡尔坐标系数据的列表，每个元素是一个笛卡尔坐标的radar图像 (np.ndarray)
-        # radar_timestamps：雷达扫描的source timestamp序列
-        _, cart_data, radar_timestamps = self.radar_img_loader(radar_display_time, cart_width)
-
-        # radar_pose_tran: 相邻两次雷达扫描的位姿变换矩阵
-        # radar_timestamps：雷达扫描的source时间戳序列
-        radar_pose_tran, total_radar_timestamps = self.road_odometry_loader()
-
-        # 打印相关信息
-        print('\nValid Frames Num:', len(radar_timestamps))
-        print('Total Frames Num:', len(total_radar_timestamps))
-        print('\nStart Timestamp:',radar_timestamps[0])
-        print('End Timestamp:', radar_timestamps[-1])
-
-        # 对齐radar数据和位姿变换数据的时间戳，提取出有radar扫描数据的时刻
-        lower_bd = radar_timestamps[0]
-        upper_bd = radar_timestamps[-1]
-
-        indices = np.argwhere((total_radar_timestamps >= lower_bd) & (total_radar_timestamps <= upper_bd))
-
-        print("\nIndices Num:", len(indices))
-        print("Valid Indices:", indices[0], '~', indices[-1])
-
-
-        # 对于有radar扫描数据的时刻，保存相邻两张radar图像数据，以及位姿变换矩阵
-        # 每一组数据包含img1.png, img2.png, pose_tran.npy
-        # 每一组数据保存在'./train_data/XXXX_YYYY'文件夹下，XXXX为img1.png的时间戳，YYYY为img2.png的时间戳
-        # 其中XXXX比YYYY小，也即pose_tran对应img1到img2的位姿变换
-
-        # 判断radar扫描数据文件路径是否存在
-        if not os.path.exists(train_data_dir):
-            raise IOError(f'{train_data_dir}路径不存在，请检查train data保存路径!')
-        
-        # 清空train_data文件夹
-        self.delete_files_in_folder(train_data_dir)
-        print(f"\n{train_data_dir} 文件夹下的所有内容已经成功清空！")
-
-
-        # 按照要求保存训练数据
-        for k in range(indices.shape[0] - 1):
-            tran_index = indices[k][0]
-
-            # 相邻radar扫描图像，位姿变换矩阵
-            img_1 = (cart_data[k] * 255).astype(np.uint8)
-            img_2 = (cart_data[k + 1] * 255).astype(np.uint8)
-            pose_tran = radar_pose_tran[tran_index]
-
-            # 相邻时间戳
-            tt_1 = radar_timestamps[k]
-            tt_2 = radar_timestamps[k + 1]
-
-            # 保存路径
-            folder_name = f'{tt_1}_{tt_2}'
-            data_dir = train_data_dir / folder_name
-
-            # 判断保存路径是否存在
-            if not os.path.exists(data_dir):
-                os.makedirs(data_dir)
-            
-            cv2.imwrite(str(os.path.join(data_dir, 'image_1.png')), img_1)
-            cv2.imwrite(str(os.path.join(data_dir, 'image_2.png')), img_2)
-            np.save(os.path.join(str(data_dir), 'pose_tran.npy'), pose_tran)
-
-        data_num = indices.shape[0] - 1
-        print(f'{data_num}组训练数据已经成功保存，保存路径是{train_data_dir}\n')
-
-
 
 class OxfordDataset(Dataset):
     """Oxford Radar Robotcar Dataset."""
     def __init__(self, config, split='train'):
         self.config = config
         self.data_dir = config['data_dir']
-        self.processor = Radar_Data_Preprocess(self.data_dir)
+        self.processor = Radar_Data_Preprocess()
         self.dataset_prefix = config['dataset_prefix']
         self.polar_mask = config['polar_mask']
         
@@ -552,7 +419,7 @@ class OxfordDataset(Dataset):
                 line = line.split(',')
                 if int(line[9]) == radar_time:
                     T = self.processor.se3_transform(float(line[2]), float(line[3]), float(line[7]))  # from next time to current
-                    return get_inverse_tf(T), int(line[1]), int(line[0])    # T_2_1 from current time step to the next
+                    return self.processor.get_inverse_tf(T), int(line[1]), int(line[0])    # T_2_1 from current time step to the next
         assert(0), 'ground truth transform for {} not found in {}'.format(radar_time, gt_path)
 
     def __len__(self):
@@ -624,74 +491,3 @@ def get_dataloaders(config):
     test_loader = DataLoader(test_dataset, batch_sampler=test_sampler, num_workers=config['num_workers'])
     return train_loader, valid_loader, test_loader
 
-
-
-class CustomDataset(Dataset):
-    def __init__(self, data_root_dir,img_sz, mode='train'):
-        self.mode=mode
-        self.root_dir = data_root_dir
-        self.data_folders = [os.path.join(data_root_dir, folder) for folder in os.listdir(data_root_dir) if os.path.isdir(os.path.join(data_root_dir, folder))]
-        self.train_data=self.data_folders[0:int(len(self.data_folders)*0.8)]
-        self.test_data=self.data_folders[int(len(self.data_folders)*0.8):]
-        # self.test_data=self.data_folders[0:int(len(self.data_folders)*0.8)]
-        self.transform = transforms.Compose(
-                                                [
-                                                    transforms.Resize((img_sz, img_sz)),
-                                                    transforms.ToTensor(), 
-                                                    transforms.Normalize(mean=[0.5], std=[0.5])
-                                                ]
-                                             )
-    
-    def __len__(self):
-        if self.mode == 'train':
-            return len(self.train_data)
-        else:
-            return len(self.test_data)
-
-    def __getitem__(self, idx):
-        if self.mode == 'train':
-            folder_path = self.train_data[idx]
-        else:
-            folder_path = self.test_data[idx]
-
-        img_name = folder_path.split('/')[-1]
-
-        # 导入radar扫描图像
-        image_1_path = os.path.join(folder_path, 'image_1.png')
-        image_2_path = os.path.join(folder_path, 'image_2.png')
-        image_1 = Image.open(image_1_path)
-        image_2 = Image.open(image_2_path)
-               
-        # 导入位姿变换矩阵
-        pose_tran_path = os.path.join(folder_path, 'pose_tran.npy')
-        pose_tran = np.load(pose_tran_path)
-        
-        # 改变数据类型为tensor
-        image_1 = self.transform(image_1)
-        image_2 = self.transform(image_2)
-        pose_tran = torch.from_numpy(pose_tran).float()
-        
-        if self.mode == 'train':
-            return image_1, image_2, pose_tran
-        else:
-            return image_1, image_2, pose_tran ,img_name
-
-
-
-# if __name__ == "__main__":
-#     parser = argparse.ArgumentParser(description='Load train data from the dataset.')
-#     parser.add_argument('--dataset_dir', type=Path, help='Directory containing dataset.')
-#     parser.add_argument('--train_data_dir', type=Path, help='Directory for savining train data.')
-#     parser.add_argument('--radar_display_time', type=int, help='Display time of each radar frame.')
-#     parser.add_argument('--cart_width', type=int, help='Width of the cartesian radar image.')
-#     args = parser.parse_args()
-
-#     dataset_path = args.dataset_dir
-#     train_data_path = args.train_data_dir
-#     radar_display_time = args.radar_display_time
-#     cart_width = args.cart_width
-
-#     print(dataset_path, train_data_path, radar_display_time)
-
-#     data_preprocess = Radar_Data_Preprocess(dataset_dir = dataset_path)
-#     data_preprocess.main(train_data_path, radar_display_time, cart_width)
