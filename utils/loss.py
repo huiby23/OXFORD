@@ -265,7 +265,7 @@ class SoftmaxMatcher(nn.Module):
         match_weights = 0.5 * (desc_match_score + 1) * src_scores * pseudo_scores
 
 
-        return pseudo_coords, match_weights, kp_inds
+        return pseudo_coords, match_weights, kp_inds, soft_match_vals
 
 
 

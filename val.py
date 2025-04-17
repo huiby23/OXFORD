@@ -40,7 +40,7 @@ def Args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', default='config/steam.json', type=str, help='config file path')
     parser.add_argument('--pretrain', default=None, type=str, help='pretrain checkpoint path')
-    parser.add_argument('--val_save_dir', default='results', type=str, help='validation save directory')
+    parser.add_argument('--val_save_path', default='results', type=str, help='validation save directory')
     args = parser.parse_args()
     return args
 
@@ -77,10 +77,10 @@ def main():
         os.makedirs(args.val_save_path)
 
     if not os.path.exists(os.path.join(args.val_save_path, 'combine')):
-        os.makedirs(os.path.join(args.val_save_path, 'combine'))
+        os.makedirs(os.path.join(args.val_save_path, 'combine'), exist_ok=True)
     
     if not os.path.exists(os.path.join(args.val_save_path, 'val')):
-        os.makedirs(os.path.join(args.val_save_path, 'val'))
+        os.makedirs(os.path.join(args.val_save_path, 'val'), exist_ok=True)
 
 
     # validation
@@ -118,6 +118,14 @@ def main():
                     print(e)
                     continue
             
+            # keypoint information save
+            input_data = batch['data'].cpu().numpy()                # (B, 1, H, W)
+            detector_scores = out['detector_scores'].cpu().numpy()  # (B, 1, H, W)
+            weight_scores = out['scores'].cpu().numpy()             # (B, 1, H, W)
+            src_coords = out['src'].cpu().numpy()                   # (B, num_points, 2)
+            tgt_coords = out['tgt'].cpu().numpy()                   # (B, num_points, 2)
+            sfm_val = out['soft_match_vals'].cpu().numpy()          # (B, num_points, HW)
+            
             # config['model'] == 'Oxford_Radar':
             T_gt.append(batch['T_21'][0].numpy().squeeze())
             R_pred_ = out['R'][0].detach().cpu().numpy().squeeze()
@@ -128,7 +136,96 @@ def main():
             # print('T_pred:\n{}'.format(T_pred[-1]))
             time_used.append(time() - ts)
             if 'timestamps' in batch:
-                timestamps.append(batch['t_ref'].reshape(2,1).numpy())
+                timestamps.append(batch['timestamps'][0].numpy())
+
+            # 遍历batch中的每个样本
+            batch_size = src_coords.shape[0]
+            for i in range(batch_size):
+                # 处理输入图像
+                img = input_data[i, 0]
+                img = (img * 255).astype(np.uint8)
+                img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+                img = add_text_to_image(img, 'Input')
+                
+                # 绘制匹配点
+                src_points = src_coords[i]
+                tgt_points = tgt_coords[i]
+                for (x1, y1), (x2, y2) in zip(src_points, tgt_points):
+                    x1, y1 = int(round(x1)), int(round(y1))
+                    x2, y2 = int(round(x2)), int(round(y2))
+                    cv2.circle(img, (x1, y1), 3, (0,255,0), -1)
+                    cv2.circle(img, (x2, y2), 3, (0,0,255), -1)
+                    cv2.line(img, (x1, y1), (x2, y2), (255,0,0), 1)
+                
+                # 处理detector_scores_1
+                det_1 = detector_scores[i, 0]
+                det_1 = cv2.normalize(det_1, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+                det_img_1 = cv2.cvtColor(det_1, cv2.COLOR_GRAY2BGR)
+                det_img_1 = add_text_to_image(det_img_1, 'Detector 1')
+                
+                # 处理detector_scores_2
+                det_2 = detector_scores[i + 1, 0]
+                det_2 = cv2.normalize(det_2, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+                det_img_2 = cv2.cvtColor(det_2, cv2.COLOR_GRAY2BGR)
+                det_img_2 = add_text_to_image(det_img_2, 'Detector 2')
+
+                # 处理weight_scores_1
+                weight_1 = weight_scores[i, 0]
+                weight_1 = cv2.normalize(weight_1, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+                weight_img_1 = cv2.cvtColor(weight_1, cv2.COLOR_GRAY2BGR)
+                weight_img_1 = add_text_to_image(weight_img_1, 'Weight 1')
+
+                # 处理weight_scores_2
+                weight_2 = weight_scores[i + 1, 0]
+                weight_2 = cv2.normalize(weight_2, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+                weight_img_2 = cv2.cvtColor(weight_2, cv2.COLOR_GRAY2BGR)
+                weight_img_2 = add_text_to_image(weight_img_2, 'Weight 2')
+
+                # 计算余弦相似度
+                similarity = sfm_val[i, 160]
+                similarity = cv2.normalize(similarity, None, 0, 255, cv2.NORM_MINMAX)
+                similarity = (similarity).astype(np.uint8)# 归一化到 0-255 范围
+                similarity = cv2.cvtColor(similarity, cv2.COLOR_GRAY2BGR)
+                sim_img = add_text_to_image(similarity, 'Cos Similarity Map')
+
+                # source帧关键点坐标
+                ps_img = np.zeros((448,448), dtype=np.uint8)
+                x, y = src_coords[i,:,0], src_coords[i,:,1]
+                ps_img[y.astype(int), x.astype(int)] = 255
+                ps_img = (ps_img).astype(np.uint8)
+                ps_img = cv2.cvtColor(ps_img, cv2.COLOR_GRAY2BGR)
+                ps_img = add_text_to_image(ps_img, 'Ps location')
+
+                # destination帧关键点坐标
+                pd_img = np.zeros((448,448), dtype=np.uint8)
+                x, y = tgt_coords[i,:,0], tgt_coords[i,:,1]
+                pd_img[y.astype(int), x.astype(int)] = 255
+                pd_img = (pd_img).astype(np.uint8)
+                pd_img = cv2.cvtColor(pd_img, cv2.COLOR_GRAY2BGR)
+                pd_img = add_text_to_image(pd_img, 'Pd location')
+
+                # 统一尺寸
+                det_img_1 = cv2.resize(det_img_1, (448,448))
+                det_img_2 = cv2.resize(det_img_2, (448,448))
+                weight_img_1 = cv2.resize(weight_img_1, (448,448))
+                weight_img_2 = cv2.resize(weight_img_2, (448,448))
+                sim_img = cv2.resize(sim_img, (448,448))
+
+                # 拼接并保存
+                row_1 = cv2.hconcat([det_img_1, det_img_2, weight_img_1, weight_img_2])
+                row_2 = cv2.hconcat([ps_img, pd_img, sim_img, img])
+                combined = cv2.vconcat([row_1, row_2])
+                seq_name = seq_names[0]  # 获取当前序列名
+                save_name = f"{seq_name}_batch{batchi}_sample{i}.png"
+                cv2.imwrite(os.path.join(args.val_save_path, 'combine', save_name), combined)
+                cv2.imwrite(os.path.join(args.val_save_path, 'val', f"input_{save_name}"), img)
+                cv2.imwrite(os.path.join(args.val_save_path, 'val', f"det_1_{save_name}"), det_img_1)
+                cv2.imwrite(os.path.join(args.val_save_path, 'val', f"det_2_{save_name}"), det_img_2)
+                cv2.imwrite(os.path.join(args.val_save_path, 'val', f"weight_1_{save_name}"), weight_img_1)
+                cv2.imwrite(os.path.join(args.val_save_path, 'val', f"weight_2_{save_name}"), weight_img_2)
+                cv2.imwrite(os.path.join(args.val_save_path, 'val', f"ps_{save_name}"), ps_img)
+                cv2.imwrite(os.path.join(args.val_save_path, 'val', f"pd_{save_name}"), pd_img)
+                cv2.imwrite(os.path.join(args.val_save_path, 'val', f"sim_{save_name}"), sim_img)      
         
         T_gt_.extend(T_gt)
         T_pred_.extend(T_pred)
@@ -146,7 +243,10 @@ def main():
             save_in_yeti_format(T_gt, T_pred, timestamps, [len(T_gt)], seq_names, root)
         
         pickle.dump([T_gt, T_pred, timestamps], open(root + 'odom' + seq_names[0] + '.obj', 'wb'))
-
+        T_icra = None
+        if config['dataset'] == 'oxford':
+            if config['compare_yeti']:
+                T_icra = load_icra21_results('./results/icra21/', seq_names, seq_lens)
         fname = root + seq_names[0] + '.pdf'
         plot_sequences(T_gt, T_pred, [len(T_gt)], returnTensor=False, T_icra=T_icra, savePDF=True, fnames=[fname])
 
