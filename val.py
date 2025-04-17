@@ -1,18 +1,22 @@
-import argparse
+import os
+import cv2
 import json
-from time import time
-import pickle
-import numpy as np
 import torch
+import pickle
+import argparse
+import numpy as np
 
 from networks.Oxford_Radar import Oxford_Radar
 from utils.dataloader import get_dataloaders
-from utils.utils import computeMedianError, computeKittiMetrics, load_icra21_results, save_in_yeti_format_new, get_transform2
+from utils.utils import computeMedianError, computeKittiMetrics, load_icra21_results, save_in_yeti_format, get_transform2
 from utils.utils import plot_sequences
+from time import time
 
+# init
 torch.backends.cudnn.benchmark = False
 torch.backends.cudnn.enabled = True
 torch.backends.cudnn.deterministic = True
+
 
 def get_folder_from_file_path(path):
     elems = path.split('/')
@@ -22,15 +26,27 @@ def get_folder_from_file_path(path):
     return newpath
 
 
+def add_text_to_image(image, text):
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 1
+    color = (255, 255, 255)  # 白色文字
+    thickness = 2
+    position = (10, 30)  # 左上角位置
+    image_with_text = cv2.putText(image.copy(), text, position, font, font_scale, color, thickness, lineType=cv2.LINE_AA)
+    return image_with_text
+
+
 def Args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', default='config/steam.json', type=str, help='config file path')
     parser.add_argument('--pretrain', default=None, type=str, help='pretrain checkpoint path')
+    parser.add_argument('--val_save_dir', default='results', type=str, help='validation save directory')
     args = parser.parse_args()
     return args
 
 
 def main():
+    # initialize
     torch.set_num_threads(8)
     args = Args()
 
@@ -43,6 +59,8 @@ def main():
         model = Oxford_Radar(config).to(config['gpuid'])
     assert(args.pretrain is not None)
 
+
+    # load model
     checkpoint = torch.load(args.pretrain, map_location=torch.device(config['gpuid']))
     failed = False
     try:
@@ -52,6 +70,20 @@ def main():
         failed = True
     if failed:
         model.load_state_dict(checkpoint, strict=False)
+    
+
+    # img save path
+    if not os.path.exists(args.val_save_path):
+        os.makedirs(args.val_save_path)
+
+    if not os.path.exists(os.path.join(args.val_save_path, 'combine')):
+        os.makedirs(os.path.join(args.val_save_path, 'combine'))
+    
+    if not os.path.exists(os.path.join(args.val_save_path, 'val')):
+        os.makedirs(os.path.join(args.val_save_path, 'val'))
+
+
+    # validation
     model.eval()
 
     T_gt_ = []
@@ -59,6 +91,7 @@ def main():
     t_errs = []
     r_errs = []
     time_used_ = []
+    save_yeti = config['save_yeti']
 
     for seq_num in seq_nums:
         time_used = []
@@ -95,7 +128,7 @@ def main():
             # print('T_pred:\n{}'.format(T_pred[-1]))
             time_used.append(time() - ts)
             if 'timestamps' in batch:
-                timestamps.append(batch['timestamps'][0].numpy())
+                timestamps.append(batch['t_ref'].reshape(2,1).numpy())
         
         T_gt_.extend(T_gt)
         T_pred_.extend(T_pred)
@@ -109,13 +142,11 @@ def main():
         t_errs.append(t_err)
         r_errs.append(r_err)
 
-        print(timestamps[0].shape)
-        save_in_yeti_format_new(T_gt, T_pred, [len(T_gt)], seq_names, root)
+        if save_yeti:
+            save_in_yeti_format(T_gt, T_pred, timestamps, [len(T_gt)], seq_names, root)
+        
         pickle.dump([T_gt, T_pred, timestamps], open(root + 'odom' + seq_names[0] + '.obj', 'wb'))
-        T_icra = None
-        if config['dataset'] == 'oxford':
-            if config['compare_yeti']:
-                T_icra = load_icra21_results('./results/icra21/', seq_names, seq_lens)
+
         fname = root + seq_names[0] + '.pdf'
         plot_sequences(T_gt, T_pred, [len(T_gt)], returnTensor=False, T_icra=T_icra, savePDF=True, fnames=[fname])
 

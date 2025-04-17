@@ -60,5 +60,6 @@
     "vis_num": 5,
     "vis_keypoint_nms": 0.01,
 
+    "save_yeti": false,
     "compare_yeti": false
 }

@@ -436,4 +436,4 @@ class SVD(torch.nn.Module):
             t_src_tgt_intgt = -R_tgt_src.bmm(t_tgt_src_insrc)  # B x 3 x 1
 
         
-        return R_tgt_src, t_tgt_src_insrc, t_src_tgt_intgt
+        return R_tgt_src, t_src_tgt_intgt

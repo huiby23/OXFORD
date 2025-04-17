@@ -302,36 +302,6 @@ def save_in_yeti_format(T_gt, T_pred, timestamps, seq_lens, seq_names, root='./'
                                                            timestamps[i][0], timestamps[i][1]))
 
 
-def save_in_yeti_format_new(T_gt, T_pred, seq_lens, seq_names, root='./'):
-    """This function converts outputs to a file format that is backwards compatible with the yeti repository.
-    Args:
-        T_gt (List[np.ndarray]): each entry in list is 4x4 transformation matrix, ground truth transforms
-        T_pred (List[np.ndarray]): each entry in list is 4x4 transformation matrix, predicted transforms
-        seq_lens (List[int]): length of each sequence in number of frames
-        seq_names (List[AnyStr]): name of each sequence
-        root (AnyStr): name of the root data folder
-    """
-    seq_indices = []
-    idx = 0
-    for s in seq_lens:
-        seq_indices.append(list(range(idx, idx + s - 1)))
-        idx += (s - 1)
-
-    for s, indices in enumerate(seq_indices):
-        fname = root + 'accuracy' + seq_names[s] + '.csv'
-        with open(fname, 'w') as f:
-            f.write('x,y,yaw,gtx,gty,gtyaw,time1,time2\n')
-            for i in indices:
-                R_pred = T_pred[i][:3, :3]
-                t_pred = T_pred[i][:3, 3:]
-                yaw = -1 * np.arcsin(R_pred[0, 1])
-                gtyaw = -1 * np.arcsin(T_gt[i][0, 1])
-                t = np.matmul(-1 * R_pred.transpose(), np.reshape(t_pred, (3, 1)))
-                T = get_inverse_tf(T_gt[i])
-                f.write('{},{},{},{},{},{},{},{}\n'.format(t[0, 0], t[1, 0], yaw, T[0, 3], T[1, 3], gtyaw,
-                                                           f'img{i}', f'img{i+1}'))
-
-
 def load_icra21_results(results_loc, seq_names, seq_lens):
     """Loads ICRA 2021 results for MC-RANSAC (Burnett et al.) on the Oxford Radar Dataset.
     Args:
@@ -409,7 +379,8 @@ def get_indices(batch_size, window_size):
             idx = i * window_size + j
             src_ids.append(idx)
             tgt_ids.append(idx + 1)
-
+    
+    return src_ids, tgt_ids
 
 def get_lr(optimizer):
     for param_group in optimizer.param_groups:
