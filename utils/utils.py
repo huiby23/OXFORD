@@ -194,7 +194,14 @@ def calcSequenceErrors(poses_gt, poses_pred):
     # Pre-compute distances from ground truth as reference
     dist = trajectoryDistances(poses_gt)
 
-    for first_frame in range(0, len(poses_gt), step_size):
+    len_poses = len(poses_gt)
+    if len_poses < 800:
+        resized_step = int(len_poses / 8)
+        lengths = np.array([1, 2, 3, 4, 5, 6, 7, 8])
+        lengths = lengths * resized_step
+        step_size = 2
+
+    for first_frame in range(0, len_poses, step_size):
         for length in lengths:
             last_frame = lastFrameFromSegmentLength(dist, first_frame, length)
             if last_frame == -1:
