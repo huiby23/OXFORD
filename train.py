@@ -84,6 +84,7 @@ def main():
     model.train()
 
     for epoch in range(start_epoch, config['max_epochs']):
+        print('Epoch: {}'.format(epoch))
         for batchi, batch in enumerate(train_loader):
             if config['augmentation']['rot_max'] != 0:
                 # config['dataset'] == 'oxford' and config['model'] == 'Oxford_Radar':

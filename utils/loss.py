@@ -432,8 +432,7 @@ class SVD(torch.nn.Module):
             # Compute rotation and translation (T_tgt_src)
             R_tgt_src = torch.bmm(VT.transpose(2, 1), torch.bmm(Sigma, U.transpose(2, 1)))  # B x 3 x 3
             
-            t_tgt_src_insrc =  tgt_centroid - torch.bmm(R_tgt_src, src_centroid)    # B x 3 x 1
-            t_src_tgt_intgt = -R_tgt_src.bmm(t_tgt_src_insrc)  # B x 3 x 1
+            t_src_tgt_intgt =  tgt_centroid - torch.bmm(R_tgt_src, src_centroid)    # B x 3 x 1
 
         
         return R_tgt_src, t_src_tgt_intgt

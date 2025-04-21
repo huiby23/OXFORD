@@ -36,6 +36,43 @@ def add_text_to_image(image, text):
     return image_with_text
 
 
+def filter_keypoints_by_weight(src_coords, tgt_coords, weight_scores, threshold=0.5):
+    """
+    根据权重分数筛选关键点
+    参数:
+        src_coords: (B, N, 2) 源关键点坐标
+        tgt_coords: (B, N, 2) 目标关键点坐标
+        weight_scores: (B, 1, H, W) 权重分数图
+        threshold: 筛选阈值
+    返回:
+        valid_src: (B, M, 2) 筛选后的源关键点
+        valid_tgt: (B, M, 2) 筛选后的目标关键点
+    """
+    valid_src = []
+    valid_tgt = []
+    
+    batch_size = src_coords.shape[0]
+    for b in range(batch_size):
+        batch_src = []
+        batch_tgt = []
+        weights = weight_scores[b, 0]  # (H, W)
+        
+        for (x1, y1), (x2, y2) in zip(src_coords[b], tgt_coords[b]):
+            x1_int = int(round(x1))
+            y1_int = int(round(y1))
+            
+            # 检查坐标是否在有效范围内
+            if (0 <= y1_int < weights.shape[0]) and (0 <= x1_int < weights.shape[1]):
+                if weights[y1_int, x1_int] > threshold:
+                    batch_src.append([x1, y1])
+                    batch_tgt.append([x2, y2])
+        
+        valid_src.append(np.array(batch_src))
+        valid_tgt.append(np.array(batch_tgt))
+    
+    return np.array(valid_src), np.array(valid_tgt)
+
+
 def Args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', default='config/steam.json', type=str, help='config file path')
@@ -126,6 +163,9 @@ def main():
             tgt_coords = out['tgt'].cpu().numpy()                   # (B, num_points, 2)
             sfm_val = out['soft_match_vals'].cpu().numpy()          # (B, num_points, HW)
             
+            # 根据score筛选关键点
+            valid_src_coords, valid_tgt_coords = filter_keypoints_by_weight(src_coords, tgt_coords, weight_scores, score_threshold)
+
             # config['model'] == 'Oxford_Radar':
             T_gt.append(batch['T_21'][0].numpy().squeeze())
             R_pred_ = out['R'][0].detach().cpu().numpy().squeeze()
@@ -145,6 +185,7 @@ def main():
                 img = input_data[i, 0]
                 img = (img * 255).astype(np.uint8)
                 img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+                valid_img = img.copy()
                 img = add_text_to_image(img, 'Input')
                 
                 # 绘制匹配点
@@ -156,6 +197,18 @@ def main():
                     cv2.circle(img, (x1, y1), 3, (0,255,0), -1)
                     cv2.circle(img, (x2, y2), 3, (0,0,255), -1)
                     cv2.line(img, (x1, y1), (x2, y2), (255,0,0), 1)
+
+                valid_img = add_text_to_image(valid_img, 'Valid Points')
+        
+                # 绘制筛选后的关键点
+                valid_src_points = valid_src_coords[i]
+                valid_tgt_points = valid_tgt_coords[i]
+                for (x1, y1), (x2, y2) in zip(valid_src_points, valid_tgt_points):
+                    x1, y1 = int(round(x1)), int(round(y1))
+                    x2, y2 = int(round(x2)), int(round(y2))
+                    cv2.circle(valid_img, (x1, y1), 3, (0,255,0), -1)
+                    cv2.circle(valid_img, (x2, y2), 3, (0,0,255), -1)
+                    cv2.line(valid_img, (x1, y1), (x2, y2), (255,0,0), 1)
                 
                 # 处理detector_scores_1
                 det_1 = detector_scores[i, 0]
@@ -213,7 +266,7 @@ def main():
 
                 # 拼接并保存
                 row_1 = cv2.hconcat([det_img_1, det_img_2, weight_img_1, weight_img_2])
-                row_2 = cv2.hconcat([ps_img, pd_img, sim_img, img])
+                row_2 = cv2.hconcat([ps_img, pd_img, img, valid_img])
                 combined = cv2.vconcat([row_1, row_2])
                 seq_name = seq_names[0]  # 获取当前序列名
                 save_name = f"{seq_name}_batch{batchi}_sample{i}.png"
@@ -225,7 +278,8 @@ def main():
                 cv2.imwrite(os.path.join(args.val_save_path, 'val', f"weight_2_{save_name}"), weight_img_2)
                 cv2.imwrite(os.path.join(args.val_save_path, 'val', f"ps_{save_name}"), ps_img)
                 cv2.imwrite(os.path.join(args.val_save_path, 'val', f"pd_{save_name}"), pd_img)
-                cv2.imwrite(os.path.join(args.val_save_path, 'val', f"sim_{save_name}"), sim_img)      
+                cv2.imwrite(os.path.join(args.val_save_path, 'val', f"sim_{save_name}"), sim_img) 
+                cv2.imwrite(os.path.join(args.val_save_path, 'val', f"valid_{save_name}"), valid_img)     
         
         T_gt_.extend(T_gt)
         T_pred_.extend(T_pred)
