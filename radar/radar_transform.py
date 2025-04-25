@@ -4,7 +4,7 @@
 import numpy as np
 import cv2
 import torch
-from utils.dataloader import Radar_Data_Preprocess
+from utils.utils import get_transform
 
 
 def augmentBatch(batch, config):
@@ -20,7 +20,7 @@ def augmentBatch(batch, config):
 
     for i in range(batch_size):
         rot = np.random.uniform(-rot_max, rot_max)
-        T = Radar_Data_Preprocess.se3_transform(0, 0, rot)
+        T = get_transform(0, 0, rot)
         for j in range(1, window_size):
             k = j + i * window_size
             img = data[k].squeeze()

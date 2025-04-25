@@ -17,6 +17,7 @@ torch.backends.cudnn.benchmark = False
 torch.backends.cudnn.enabled = True
 torch.backends.cudnn.deterministic = True
 
+score_threshold = 0.8
 
 def get_folder_from_file_path(path):
     elems = path.split('/')
