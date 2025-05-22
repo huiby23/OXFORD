@@ -1,13 +1,14 @@
 import os
+import argparse
 import json
 import torch
-import argparse
 import numpy as np
+
 
 from networks.Oxford_Radar import Oxford_Radar
 from utils.monitor import SVDMonitor
 from utils.utils import get_lr
-from utils.loss import supervised_loss, unsupervised_loss
+from utils.loss import supervised_loss, unsupervised_loss, supervised_loss_new
 from utils.dataloader import get_dataloaders
 from radar.radar_transform import augmentBatch
 
@@ -97,7 +98,8 @@ def main():
                 print('WARNING: exception encountered... skipping this batch.')
                 continue
             if config['model'] == 'Oxford_Radar':
-                loss, dict_loss = supervised_loss(out['R'], out['t'], batch, config)
+                # loss, dict_loss = supervised_loss(out['R'], out['t'], batch, config)
+                loss, dict_loss = supervised_loss_new(out['R'], out['t'], out['src'], out['tgt'], batch, config)
             elif config['model'] == 'HERO':
                 loss, dict_loss = unsupervised_loss(out, batch, config, model.solver)
             if loss == 0:

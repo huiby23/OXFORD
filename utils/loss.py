@@ -31,10 +31,74 @@ def supervised_loss(R_tgt_src_pred, t_tgt_src_pred, batch, config, alpha=10.0):
     R_loss = loss_fn(torch.matmul(R_tgt_src_pred.transpose(2, 1), R_tgt_src), identity)
     t_loss = loss_fn(t_tgt_src_pred, t_tgt_src)
     
-    svd_loss = t_loss + alpha * R_loss
+    if config['loss_alpha'] == alpha:
+        svd_loss = t_loss + alpha * R_loss
+    else:
+        svd_loss = t_loss + config['loss_alpha'] * R_loss
     dict_loss = {'R_loss': R_loss, 't_loss': t_loss}
     
     return svd_loss, dict_loss
+
+def supervised_loss_new(R_tgt_src_pred, t_tgt_src_pred, src_coords, tgt_coords, batch, config, alpha=10.0):
+    """This function computes the L1 loss between the predicted and groundtruth translation in addition to
+        the rotation loss (R_pred.T * R) - I.
+    Args:
+        R_tgt_src_pred (torch.tensor): (b,3,3) predicted rotation
+        t_tgt_src_pred (torch.tensor): (b,3,1) predicted translation
+        src_coords (torch.tensor): (b,N,2) source keypoint locations
+        tgt_coords (torch.tensor): (b,N,2) target keypoint locations
+        batch (dict): input data for the batch
+        config (json): parsed config file
+    Returns:
+        svd_loss (float): supervised loss
+        dict_loss (dict): a dictionary containing the separate loss components
+    """
+    T_21 = batch['T_21'].to(config['gpuid'])
+    batch_size = R_tgt_src_pred.size(0)
+    
+    # Get ground truth transforms
+    kp_inds, _ = get_indices(batch_size, config['window_size'])
+    T_tgt_src = T_21[kp_inds]
+    R_tgt_src = T_tgt_src[:, :3, :3]
+    t_tgt_src = T_tgt_src[:, :3, 3].unsqueeze(-1)
+    
+    identity = torch.eye(3).unsqueeze(0).repeat(batch_size, 1, 1).to(config['gpuid'])
+    loss_fn = torch.nn.L1Loss()
+    loss_l2 = torch.nn.MSELoss(reduce=False)
+    
+    R_loss = loss_fn(torch.matmul(R_tgt_src_pred.transpose(2, 1), R_tgt_src), identity)
+    t_loss = loss_fn(t_tgt_src_pred, t_tgt_src)
+
+    # distance loss
+    dist_thred = config['networks']['svd_block']['pixel_distance_threshold']
+    dist_map = torch.sqrt(loss_l2(src_coords, tgt_coords) + 1e-6)      # (b,N,2)
+    dist_loss = soft_threshold_ratio(dist_map, dist_thred, temperature=config['dist_loss_temp'])  # (1)
+    
+    if config['loss_alpha'] == alpha:
+        svd_loss = t_loss + alpha * R_loss + config['loss_beta'] * dist_loss
+    else:
+        svd_loss = t_loss + config['loss_alpha'] * R_loss + config['loss_beta'] * dist_loss
+    dict_loss = {'R_loss': R_loss, 't_loss': t_loss, 'dist_loss': dist_loss}
+    
+    return svd_loss, dict_loss
+
+def soft_threshold_ratio(dist_map, threshold, temperature=1.0):
+    """
+    Args:
+        dist_map: (b, N, 2) 欧氏距离
+        threshold: 标量阈值
+        temperature: 控制 Sigmoid 的陡峭程度（越小越接近硬阈值）
+    Returns:
+        ratio_loss: 可微分的超阈值比例估计
+    """
+    # 输入数据检查
+    assert not torch.isnan(dist_map).any(), "dist_map contains NaN!"
+    assert not torch.isinf(dist_map).any(), "dist_map contains Inf!"
+
+    # 计算超阈值概率（Sigmoid 软二值化）
+    prob = torch.sigmoid((dist_map - threshold) * temperature)  # (b, N, 2)
+    ratio_loss = prob.mean()  # 求平均
+    return ratio_loss
 
 def unsupervised_loss(out, batch, config, solver):
     """This function uses the reprojection between matched pairs of points as a training signal.
@@ -251,7 +315,7 @@ class SoftmaxMatcher(nn.Module):
         # GET SCORES for pseudo point locations
         pseudo_norm = normalize_coords(pseudo_coords, H, W).unsqueeze(1)    # B x 1 x N x 2
         tgt_scores_dense = scores_dense[dense_inds]     # B x 1 x H x W
-        pseudo_scores = F.grid_sample(tgt_scores_dense, pseudo_norm, mode='bilinear')   # B x 1 x 1 x N
+        pseudo_scores = F.grid_sample(tgt_scores_dense, pseudo_norm, mode='bilinear', align_corners=True)   # B x 1 x 1 x N
         pseudo_scores = pseudo_scores.reshape(B, 1, N)  # B x 1 x N
         
         # GET DESCRIPTORS for pseudo point locations
@@ -352,6 +416,9 @@ class SVD(torch.nn.Module):
         self.window_size = config['window_size']
         self.gpuid = config['gpuid']
         self.linalg_svd = config['networks']['svd_block']['linalg_svd']
+        self.coords_filter = config['networks']['svd_block']['coords_filter']
+        self.weight_nms = config['networks']['svd_block']['weight_nms']
+        self.pixel_distance_threshold = config['networks']['svd_block']['pixel_distance_threshold']
 
     def forward(self, src_coords, tgt_coords, weights, convert_from_pixels=True):
         """ This modules used differentiable singular value decomposition to compute the rotations and translations that
@@ -363,7 +430,6 @@ class SVD(torch.nn.Module):
             convert_from_pixels (bool): if true, input is in pixel coordinates and must be converted to metric
         Returns:
             R_tgt_src (torch.tensor): (b,3,3) rotation from src to tgt
-            t_tgt_src_insrc (torch.tensor): (b,3,1) translation from src to tgt as measured in src
             t_src_tgt_intgt (torch.tensor): (b,3,1) translation from tgt to src as measured in tgt
         """
         if src_coords.size(0) > tgt_coords.size(0):
@@ -375,6 +441,28 @@ class SVD(torch.nn.Module):
         
         B = src_coords.size(0)  # B x N x 2
         
+        # Remove point pairs with excessive distance or low weight
+        if self.coords_filter:
+            diff_coords = torch.abs(tgt_coords - src_coords)            # B x N x 2
+            distance = torch.sum(diff_coords, dim=2, keepdim=True)      # B x N x 1
+            
+            # weight limit
+            max_w = torch.max(weights)
+            weight_threshold = self.weight_nms * max_w
+            weight_mask = (weights > weight_threshold).float()      # B x 1 x N
+            
+            # distance limit
+            dth = self.pixel_distance_threshold
+            distance_mask = (distance < dth).float().transpose(1, 2)    # B x 1 x N
+            
+            # combined mask
+            combined_mask = weight_mask * distance_mask     # B x 1 x N
+            
+            # apply mask while preserving dimensions
+            weights = weights * combined_mask           # B x 1 x N
+            src_coords = src_coords * combined_mask.permute(0, 2, 1)    # B x N x 2
+            tgt_coords = tgt_coords * combined_mask.permute(0, 2, 1)    # B x N x 2
+
         # pixel -> world
         if convert_from_pixels:
             src_coords = convert_to_radar_frame(src_coords, self.config)
@@ -390,6 +478,7 @@ class SVD(torch.nn.Module):
         
         src_coords = src_coords.transpose(2, 1)     # B x 3 x N
         tgt_coords = tgt_coords.transpose(2, 1)     # B x 3 x N
+        
 
         # Compute weighted centroids
         w = torch.sum(weights, dim=2, keepdim=True) + 1e-4
@@ -414,6 +503,8 @@ class SVD(torch.nn.Module):
                 U, _, V = torch.svd(S + 1e-4 * S.mean() * torch.rand(1, 3).to(self.gpuid))
 
             det_UV = torch.det(U) * torch.det(V)
+            # print(S[0])
+            # print(det_UV)
             ones = torch.ones(B, 2).type_as(V)
             Sigma = torch.diag_embed(torch.cat((ones, det_UV.unsqueeze(1)), dim=1))  # B x 3 x 3
 

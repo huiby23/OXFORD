@@ -250,13 +250,30 @@ class Radar_Data_Preprocess():
         encoder_size = 5600
         
         raw_example_data = cv2.imread(example_path, cv2.IMREAD_GRAYSCALE)
-        timestamps = raw_example_data[:, :8].copy().view(np.int64)
-        azimuths = (raw_example_data[:, 8:10].copy().view(np.uint16) / float(encoder_size) * 2 * np.pi).astype(np.float32)
-        valid = raw_example_data[:, 10:11] == 255
-        
-        fft_data = raw_example_data[:, 11:].astype(np.float32)[:, :, np.newaxis] / 255.
-        fft_data[:, :42] = 0
-        fft_data = np.squeeze(fft_data)
+
+        len = raw_example_data.shape[1]
+        if len == 3779:
+            timestamps = raw_example_data[:, :8].copy().view(np.int64)
+            azimuths = (raw_example_data[:, 8:10].copy().view(np.uint16) / float(encoder_size) * 2 * np.pi).astype(np.float32)
+            valid = raw_example_data[:, 10:11] == 255
+            
+            fft_data = raw_example_data[:, 11:].astype(np.float32)[:, :, np.newaxis] / 255.
+            fft_data[:, :42] = 0
+            fft_data = np.squeeze(fft_data)
+        elif len == 3768:
+            # 获取初始时间戳
+            filename = os.path.basename(example_path)
+            timestamp = int(filename.split('.')[0])
+            timestamps = np.linspace(timestamp, timestamp+250000, num=400, endpoint=False).astype(np.int64)
+            timestamps = timestamps.reshape((400, 1))
+
+            azimuths = np.linspace(2 * np.pi / 400 , 2 * np.pi, num=400, endpoint=True).astype(np.float32)
+            azimuths = azimuths.reshape((400, 1))  
+            valid = np.ones((400, 1), dtype=bool)
+            
+            fft_data = raw_example_data[:, :].astype(np.float32)[:, :, np.newaxis] / 255.
+            fft_data[:, :42] = 0
+            fft_data = np.squeeze(fft_data)        
 
         return timestamps, azimuths, valid, fft_data
 
@@ -343,7 +360,7 @@ class Radar_Data_Preprocess():
             [np.sin(yaw),  np.cos(yaw), 0, y],
             [0,           0,            1, 0],
             [0,           0,            0, 1]
-        ])
+        ]).astype(np.float32)
 
 
     def get_inverse_tf(self, T):
@@ -415,6 +432,7 @@ class OxfordDataset(Dataset):
         self.processor = Radar_Data_Preprocess()
         self.dataset_prefix = config['dataset_prefix']
         self.polar_mask = config['polar_mask']
+        self.frame_order = config['frame_order']
         
         sequences = self.processor.get_sequences(self.data_dir, self.dataset_prefix)
         self.sequences = self.get_sequences_split(sequences, split)
@@ -488,9 +506,18 @@ class OxfordDataset(Dataset):
             lines = f.readlines()
             for i, line in enumerate(lines):
                 line = line.split(',')
-                if int(line[9]) == radar_time:
-                    T = self.processor.se3_transform(float(line[2]), float(line[3]), float(line[7]))  # from next time to current
-                    return self.processor.get_inverse_tf(T), int(line[1]), int(line[0])    # T_2_1 from current time step to the next
+                if self.frame_order == 2:
+                    if int(line[8]) == radar_time:
+                        T = self.processor.se3_transform(float(line[2]), float(line[3]), float(line[7]))  # from current time to next
+                        return T, int(line[1]), int(line[0])    # T_2_1 from current time step to the next
+                elif self.frame_order == 1:
+                    if int(line[9]) == radar_time:
+                        T = self.processor.se3_transform(float(line[2]), float(line[3]), float(line[7]))  # from next time to current
+                        return T, int(line[1]), int(line[0])    # T_2_1 from current time step to the next
+                else:
+                    if int(line[9]) == radar_time:
+                        T = self.processor.se3_transform(float(line[2]), float(line[3]), float(line[7]))  # from next time to current
+                        return self.processor.get_inverse_tf(T), int(line[1]), int(line[0])    # T_2_1 from current time step to the next
         assert(0), 'ground truth transform for {} not found in {}'.format(radar_time, gt_path)
 
     def __len__(self):

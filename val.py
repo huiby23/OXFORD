@@ -6,18 +6,19 @@ import pickle
 import argparse
 import numpy as np
 
+
 from networks.Oxford_Radar import Oxford_Radar
 from utils.dataloader import get_dataloaders
-from utils.utils import computeMedianError, computeKittiMetrics, load_icra21_results, save_in_yeti_format, get_transform2
+from utils.utils import computeMedianError, computeKittiMetrics, load_icra21_results, save_in_yeti_format_new, get_transform2
 from utils.utils import plot_sequences
 from time import time
 
-# init
 torch.backends.cudnn.benchmark = False
 torch.backends.cudnn.enabled = True
 torch.backends.cudnn.deterministic = True
 
-score_threshold = 0.8
+# 根据score筛选关键点并进行绘制
+score_threshold = 0.1
 
 def get_folder_from_file_path(path):
     elems = path.split('/')
@@ -37,14 +38,14 @@ def add_text_to_image(image, text):
     return image_with_text
 
 
-def filter_keypoints_by_weight(src_coords, tgt_coords, weight_scores, threshold=0.5):
+def filter_keypoints_by_weight(src_coords, tgt_coords, weight_scores, threshold = 0.5):
     """
-    根据权重分数筛选关键点
+    根据权重筛选关键点
     参数:
         src_coords: (B, N, 2) 源关键点坐标
         tgt_coords: (B, N, 2) 目标关键点坐标
         weight_scores: (B, 1, H, W) 权重分数图
-        threshold: 筛选阈值
+        threshold: 权重阈值
     返回:
         valid_src: (B, M, 2) 筛选后的源关键点
         valid_tgt: (B, M, 2) 筛选后的目标关键点
@@ -67,6 +68,51 @@ def filter_keypoints_by_weight(src_coords, tgt_coords, weight_scores, threshold=
                 if weights[y1_int, x1_int] > threshold:
                     batch_src.append([x1, y1])
                     batch_tgt.append([x2, y2])
+        
+        valid_src.append(np.array(batch_src))
+        valid_tgt.append(np.array(batch_tgt))
+    
+    return np.array(valid_src), np.array(valid_tgt)
+
+
+def filter_keypoints(src_coords, tgt_coords, weight_scores, num_points = 30):
+    """
+    筛选出分数前30的关键点
+    参数:
+        src_coords: (B, N, 2) 源关键点坐标
+        tgt_coords: (B, N, 2) 目标关键点坐标
+        weight_scores: (B, 1, H, W) 权重分数图
+    返回:
+        valid_src: (B, M, 2) 筛选后的源关键点
+        valid_tgt: (B, M, 2) 筛选后的目标关键点
+    """
+    valid_src = []
+    valid_tgt = []
+    
+    batch_size = src_coords.shape[0]
+    for b in range(batch_size):
+        batch_src = []
+        batch_tgt = []
+        weights = weight_scores[b, 0]  # (H, W)
+        src_x = src_coords[b, :, 0]  # (N,)
+        src_y = src_coords[b, :, 1]  # (N,)
+        src_weight = weights[src_y.astype(int), src_x.astype(int)]  # (N,)
+
+        tgt_x = tgt_coords[b, :, 0]  # (N,)
+        tgt_y = tgt_coords[b, :, 1]  # (N,)
+        tgt_weight = weights[tgt_y.astype(int), tgt_x.astype(int)]  # (N,)
+
+        sum_weight = src_weight + tgt_weight    # (N,)
+        index = sorted(range(len(sum_weight)), key=lambda i: sum_weight[i], reverse=True)[:num_points]  # 获取前30个索引
+        
+        for k in range(num_points):
+            x1 = int(round(src_x[index[k]]))
+            y1 = int(round(src_y[index[k]]))
+            x2 = int(round(tgt_x[index[k]]))
+            y2 = int(round(tgt_y[index[k]]))
+
+            batch_src.append([x1, y1])
+            batch_tgt.append([x2, y2])
         
         valid_src.append(np.array(batch_src))
         valid_tgt.append(np.array(batch_tgt))
@@ -129,7 +175,7 @@ def main():
     t_errs = []
     r_errs = []
     time_used_ = []
-    save_yeti = config['save_yeti']
+    img_width = config['cart_pixel_width']
 
     for seq_num in seq_nums:
         time_used = []
@@ -166,6 +212,7 @@ def main():
             
             # 根据score筛选关键点
             valid_src_coords, valid_tgt_coords = filter_keypoints_by_weight(src_coords, tgt_coords, weight_scores, score_threshold)
+            # valid_src_coords, valid_tgt_coords = filter_keypoints(src_coords, tgt_coords, weight_scores, 30)
 
             # config['model'] == 'Oxford_Radar':
             T_gt.append(batch['T_21'][0].numpy().squeeze())
@@ -198,7 +245,7 @@ def main():
                     cv2.circle(img, (x1, y1), 3, (0,255,0), -1)
                     cv2.circle(img, (x2, y2), 3, (0,0,255), -1)
                     cv2.line(img, (x1, y1), (x2, y2), (255,0,0), 1)
-
+                
                 valid_img = add_text_to_image(valid_img, 'Valid Points')
         
                 # 绘制筛选后的关键点
@@ -210,7 +257,7 @@ def main():
                     cv2.circle(valid_img, (x1, y1), 3, (0,255,0), -1)
                     cv2.circle(valid_img, (x2, y2), 3, (0,0,255), -1)
                     cv2.line(valid_img, (x1, y1), (x2, y2), (255,0,0), 1)
-                
+                    
                 # 处理detector_scores_1
                 det_1 = detector_scores[i, 0]
                 det_1 = cv2.normalize(det_1, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
@@ -235,15 +282,8 @@ def main():
                 weight_img_2 = cv2.cvtColor(weight_2, cv2.COLOR_GRAY2BGR)
                 weight_img_2 = add_text_to_image(weight_img_2, 'Weight 2')
 
-                # 计算余弦相似度
-                similarity = sfm_val[i, 160]
-                similarity = cv2.normalize(similarity, None, 0, 255, cv2.NORM_MINMAX)
-                similarity = (similarity).astype(np.uint8)# 归一化到 0-255 范围
-                similarity = cv2.cvtColor(similarity, cv2.COLOR_GRAY2BGR)
-                sim_img = add_text_to_image(similarity, 'Cos Similarity Map')
-
                 # source帧关键点坐标
-                ps_img = np.zeros((448,448), dtype=np.uint8)
+                ps_img = np.zeros((img_width, img_width), dtype=np.uint8)
                 x, y = src_coords[i,:,0], src_coords[i,:,1]
                 ps_img[y.astype(int), x.astype(int)] = 255
                 ps_img = (ps_img).astype(np.uint8)
@@ -251,7 +291,7 @@ def main():
                 ps_img = add_text_to_image(ps_img, 'Ps location')
 
                 # destination帧关键点坐标
-                pd_img = np.zeros((448,448), dtype=np.uint8)
+                pd_img = np.zeros((img_width, img_width), dtype=np.uint8)
                 x, y = tgt_coords[i,:,0], tgt_coords[i,:,1]
                 pd_img[y.astype(int), x.astype(int)] = 255
                 pd_img = (pd_img).astype(np.uint8)
@@ -259,11 +299,10 @@ def main():
                 pd_img = add_text_to_image(pd_img, 'Pd location')
 
                 # 统一尺寸
-                det_img_1 = cv2.resize(det_img_1, (448,448))
-                det_img_2 = cv2.resize(det_img_2, (448,448))
-                weight_img_1 = cv2.resize(weight_img_1, (448,448))
-                weight_img_2 = cv2.resize(weight_img_2, (448,448))
-                sim_img = cv2.resize(sim_img, (448,448))
+                det_img_1 = cv2.resize(det_img_1, (img_width, img_width))
+                det_img_2 = cv2.resize(det_img_2, (img_width, img_width))
+                weight_img_1 = cv2.resize(weight_img_1, (img_width, img_width))
+                weight_img_2 = cv2.resize(weight_img_2, ((img_width, img_width)))
 
                 # 拼接并保存
                 row_1 = cv2.hconcat([det_img_1, det_img_2, weight_img_1, weight_img_2])
@@ -279,12 +318,14 @@ def main():
                 cv2.imwrite(os.path.join(args.val_save_path, 'val', f"weight_2_{save_name}"), weight_img_2)
                 cv2.imwrite(os.path.join(args.val_save_path, 'val', f"ps_{save_name}"), ps_img)
                 cv2.imwrite(os.path.join(args.val_save_path, 'val', f"pd_{save_name}"), pd_img)
-                cv2.imwrite(os.path.join(args.val_save_path, 'val', f"sim_{save_name}"), sim_img) 
-                cv2.imwrite(os.path.join(args.val_save_path, 'val', f"valid_{save_name}"), valid_img)     
+                cv2.imwrite(os.path.join(args.val_save_path, 'val', f"valid_{save_name}"), valid_img)
         
         T_gt_.extend(T_gt)
         T_pred_.extend(T_pred)
         time_used_.extend(time_used)
+
+        # print('T_gt:\n', T_gt)
+        # print('T_pred:\n', T_pred)
         t_err, r_err = computeKittiMetrics(T_gt, T_pred, [len(T_gt)])
         
         print('SEQ: {} : {}'.format(seq_num, seq_names[0]))
@@ -294,9 +335,7 @@ def main():
         t_errs.append(t_err)
         r_errs.append(r_err)
 
-        if save_yeti:
-            save_in_yeti_format(T_gt, T_pred, timestamps, [len(T_gt)], seq_names, root)
-        
+        save_in_yeti_format_new(T_gt, T_pred, [len(T_gt)], seq_names, root)
         pickle.dump([T_gt, T_pred, timestamps], open(root + 'odom' + seq_names[0] + '.obj', 'wb'))
         T_icra = None
         if config['dataset'] == 'oxford':
