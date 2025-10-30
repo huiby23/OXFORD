@@ -16,9 +16,226 @@ from radar.radar_sampler import RandomWindowBatchSampler, SequentialWindowBatchS
 class Radar_Data_Preprocess():
     def __init__(self):
         pass
-    
+  
 
-    def load_radar(self, example_path, filter, threshold, k):
+    def radar_img_loader(self, dataset_dir, display_time = 10, cart_width = 448):
+        """
+        Function:
+            - 加载radar扫描数据，并显示输出
+            - 按Esc可以退出图片输出，但是提前退出会导致只有部分图片被读取
+
+        Args:
+            - data_dir: radar扫描数据的文件路径
+            - display_time: 每一帧radar扫描图像的显示持续时间(ms)
+        
+        Returns:
+            - polar_data_list: 存储极坐标系数据的列表，每个元素是一个元组 (timestamps, azimuths, valid, fft_data, radar_resolution)
+            - cart_data_list: 存储笛卡尔坐标系数据的列表，每个元素是一个笛卡尔坐标图像 (np.ndarray)
+            - radar_timestamps: radar扫描数据的source timestamp序列       
+        """
+        radar_data_dir = os.path.join(str(dataset_dir), 'radar')
+
+        # 判断radar扫描数据文件路径是否存在
+        if not os.path.exists(radar_data_dir):
+            raise IOError(f'{radar_data_dir}路径不存在，请检查radar扫描数据路径!')
+        
+        # 初始化
+        polar_data_list = []  # 存储极坐标系数据
+        cart_data_list = []   # 存储笛卡尔坐标系数据
+
+        # 读取radar timestamps
+        timestamps_path = os.path.join(os.path.join(radar_data_dir, os.pardir, 'radar.timestamps'))
+        if not os.path.isfile(timestamps_path):
+            raise IOError(f'{timestamps_path}路径不存在，请检查radar timestamps数据路径!')
+
+        # 输出设置
+        cart_resolution = .25
+        cart_pixel_width = cart_width  # pixels
+        interpolate_crossover = True
+
+        title = "Radar Scan Img"
+
+        # 按照timestamp从小到大，遍历读取radar扫描数据
+        radar_timestamps = np.loadtxt(timestamps_path, delimiter=' ', usecols=[0], dtype=np.int64)
+        for radar_timestamp in radar_timestamps:
+            filename = os.path.join(radar_data_dir, str(radar_timestamp) + '.png')
+            
+            if not os.path.isfile(filename):
+                raise FileNotFoundError("Could not find radar example: {}".format(filename))
+
+            # 加载雷达数据
+            timestamps, azimuths, valid, fft_data, radar_resolution = self.load_radar(filename)
+
+            # 将极坐标数据转换为笛卡尔坐标
+            cart_img = self.radar_polar_to_cartesian(azimuths, fft_data, radar_resolution, cart_resolution, cart_pixel_width,
+                                                    interpolate_crossover)
+
+            # 存储极坐标系数据
+            polar_data_list.append((timestamps, azimuths, valid, fft_data, radar_resolution))
+
+            # 存储笛卡尔坐标系数据
+            cart_data_list.append(cart_img)
+
+            # 可视化处理
+            downsample_rate = 4
+            fft_data_vis = fft_data[:, ::downsample_rate]
+            resize_factor = float(cart_img.shape[0]) / float(fft_data_vis.shape[0])
+            fft_data_vis = cv2.resize(fft_data_vis, (0, 0), None, resize_factor, resize_factor)
+            vis = cv2.hconcat((fft_data_vis, fft_data_vis[:, :10] * 0 + 1, cart_img))
+
+            # 调整窗口尺寸
+            w = int(vis.shape[1] * 0.8)
+            h = int(vis.shape[0] * 0.8)
+            cv2.namedWindow(title, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(title, w, h)
+            
+            cv2.putText(vis, f'Source Timestamp: {radar_timestamp}', (40, 40), 
+                        cv2.FONT_HERSHEY_COMPLEX, 0.75, (255, 0, 0), 2)
+            cv2.imshow(title, vis * 2.)  # The data is doubled to improve visualisation
+
+            key = cv2.waitKey(display_time)  # 控制显示时间
+            if key == 27:  # 按下 ESC 键退出
+                break
+
+        cv2.destroyAllWindows()  # 关闭所有 OpenCV 窗口
+        return polar_data_list, cart_data_list, radar_timestamps
+
+
+    def load_radar_old(self, radar_data_path):
+        """
+        Function:
+            - Decode a single Oxford Radar RobotCar Dataset radar example
+        
+        Args:
+            - example_path (AnyStr): Oxford Radar RobotCar Dataset Example png
+        
+        Returns:
+            - timestamps (np.ndarray): Timestamp for each azimuth in int64 (UNIX time)
+            - azimuths (np.ndarray): Rotation for each polar radar azimuth (radians)
+            - valid (np.ndarray) Mask of whether azimuth data is an original sensor reading or interpolated from adjacent azimuths
+            - fft_data (np.ndarray): Radar power readings along each azimuth
+            - radar_resolution (float): Resolution of the polar radar data (metres per pixel)
+        """
+        # Hard coded configuration to simplify parsing code
+        radar_resolution = np.array([0.0432], np.float32)
+        encoder_size = 5600
+
+        raw_example_data = cv2.imread(str(radar_data_path), cv2.IMREAD_GRAYSCALE)
+        timestamps = raw_example_data[:, :8].copy().view(np.int64)
+        azimuths = (raw_example_data[:, 8:10].copy().view(np.uint16) / float(encoder_size) * 2 * np.pi).astype(np.float32)
+        valid = raw_example_data[:, 10:11] == 255
+        fft_data = raw_example_data[:, 11:].astype(np.float32)[:, :, np.newaxis] / 255.
+
+        #  return Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float]
+        return timestamps, azimuths, valid, fft_data, radar_resolution
+
+
+    def radar_polar_to_cartesian_old(self, azimuths: np.ndarray, fft_data: np.ndarray, radar_resolution: float,
+                                cart_resolution: float, cart_pixel_width: int, interpolate_crossover=True):
+        """Convert a polar radar scan to cartesian.
+        Args:
+            azimuths (np.ndarray): Rotation for each polar radar azimuth (radians)
+            fft_data (np.ndarray): Polar radar power readings
+            radar_resolution (float): Resolution of the polar radar data (metres per pixel)
+            cart_resolution (float): Cartesian resolution (metres per pixel)
+            cart_pixel_size (int): Width and height of the returned square cartesian output (pixels). Please see the Notes
+                below for a full explanation of how this is used.
+            interpolate_crossover (bool, optional): If true interpolates between the end and start  azimuth of the scan. In
+                practice a scan before / after should be used but this prevents nan regions in the return cartesian form.
+
+        Returns:
+            np.ndarray: Cartesian radar power readings
+        
+        Notes:
+            After using the warping grid the output radar cartesian is defined as as follows where
+            X and Y are the `real` world locations of the pixels in metres:
+            If 'cart_pixel_width' is odd:
+                            +------ Y = -1 * cart_resolution (m)
+                            |+----- Y =  0 (m) at centre pixel
+                            ||+---- Y =  1 * cart_resolution (m)
+                            |||+--- Y =  2 * cart_resolution (m)
+                            |||| +- Y =  cart_pixel_width // 2 * cart_resolution (m) (at last pixel)
+                            |||| +-----------+
+                            vvvv             v
+            +---------------+---------------+
+            |               |               |
+            |               |               |
+            |               |               |
+            |               |               |
+            |               |               |
+            |               |               |
+            |               |               |
+            +---------------+---------------+ <-- X = 0 (m) at centre pixel
+            |               |               |
+            |               |               |
+            |               |               |
+            |               |               |
+            |               |               |
+            |               |               |
+            |               |               |
+            +---------------+---------------+
+            <------------------------------->
+                cart_pixel_width (pixels)
+            If 'cart_pixel_width' is even:
+                            +------ Y = -0.5 * cart_resolution (m)
+                            |+----- Y =  0.5 * cart_resolution (m)
+                            ||+---- Y =  1.5 * cart_resolution (m)
+                            |||+--- Y =  2.5 * cart_resolution (m)
+                            |||| +- Y =  (cart_pixel_width / 2 - 0.5) * cart_resolution (m) (at last pixel)
+                            |||| +----------+
+                            vvvv            v
+            +------------------------------+
+            |                              |
+            |                              |
+            |                              |
+            |                              |
+            |                              |
+            |                              |
+            |                              |
+            |                              |
+            |                              |
+            |                              |
+            |                              |
+            |                              |
+            |                              |
+            |                              |
+            |                              |
+            +------------------------------+
+            <------------------------------>
+                cart_pixel_width (pixels)
+        """
+        if (cart_pixel_width % 2) == 0:
+            cart_min_range = (cart_pixel_width / 2 - 0.5) * cart_resolution
+        else:
+            cart_min_range = cart_pixel_width // 2 * cart_resolution
+        coords = np.linspace(-cart_min_range, cart_min_range, cart_pixel_width, dtype=np.float32)
+        Y, X = np.meshgrid(coords, -coords)
+        sample_range = np.sqrt(Y * Y + X * X)
+        sample_angle = np.arctan2(Y, X)
+        sample_angle += (sample_angle < 0).astype(np.float32) * 2. * np.pi
+
+        # Interpolate Radar Data Coordinates
+        azimuth_step = azimuths[1] - azimuths[0]
+        sample_u = (sample_range - radar_resolution / 2) / radar_resolution
+        sample_v = (sample_angle - azimuths[0]) / azimuth_step
+
+        # We clip the sample points to the minimum sensor reading range so that we
+        # do not have undefined results in the centre of the image. In practice
+        # this region is simply undefined.
+        sample_u[sample_u < 0] = 0
+
+        if interpolate_crossover:
+            fft_data = np.concatenate((fft_data[-1:], fft_data, fft_data[:1]), 0)
+            sample_v = sample_v + 1
+
+        polar_to_cart_warp = np.stack((sample_u, sample_v), -1)
+        cart_img = np.expand_dims(cv2.remap(fft_data, polar_to_cart_warp, None, cv2.INTER_LINEAR), -1)
+        
+        # return np.ndarray
+        return cart_img
+
+
+    def load_radar(self, example_path):
         """Decode a single Oxford Radar RobotCar Dataset radar example
         Args:
             example_path (AnyStr): Oxford Radar RobotCar Dataset Example png
@@ -43,15 +260,22 @@ class Radar_Data_Preprocess():
             fft_data = raw_example_data[:, 11:].astype(np.float32)[:, :, np.newaxis] / 255.
             fft_data[:, :42] = 0
             fft_data = np.squeeze(fft_data)
+        elif len == 3768:
+            # 获取初始时间戳
+            filename = os.path.basename(example_path)
+            timestamp = int(filename.split('.')[0])
+            timestamps = np.linspace(timestamp, timestamp+250000, num=400, endpoint=False).astype(np.int64)
+            timestamps = timestamps.reshape((400, 1))
+
+            azimuths = np.linspace(2 * np.pi / 400 , 2 * np.pi, num=400, endpoint=True).astype(np.float32)
+            azimuths = azimuths.reshape((400, 1))  
+            valid = np.ones((400, 1), dtype=bool)
             
-            if filter:
-                fft_data = self.filter_polar(fft_data, threshold, k)
-        else:
-            print(f'Length of polar image should be 3779, but length of input is {len}.')
-            assert IOError
+            fft_data = raw_example_data[:, :].astype(np.float32)[:, :, np.newaxis] / 255.
+            fft_data[:, :42] = 0
+            fft_data = np.squeeze(fft_data)        
 
         return timestamps, azimuths, valid, fft_data
-
 
     def radar_polar_to_cartesian(self, azimuths, fft_data, radar_resolution, cart_resolution, cart_pixel_width,
                                 interpolate_crossover=True):
@@ -97,20 +321,6 @@ class Radar_Data_Preprocess():
         cart_img = np.expand_dims(cv2.remap(fft_data, polar_to_cart_warp, None, cv2.INTER_LINEAR), axis=0)
 
         return cart_img
-
-    
-    def filter_polar(self, img_valid: np.float32, threshold: np.float32, k: np.int64):
-        # image process
-        dark = (img_valid < threshold)
-        img_valid[dark] = 0.0
-        
-        k_strong_mask = np.zeros_like(img_valid).astype(np.float32)
-        index = np.argpartition(img_valid, -k, axis=1)[:, -k:]
-        np.put_along_axis(k_strong_mask, index, 1.0, axis=1)
-        
-        img_valid = img_valid * k_strong_mask
-        
-        return img_valid
 
 
     def se2_transform(self, x, y, yaw):
@@ -224,10 +434,6 @@ class OxfordDataset(Dataset):
         self.polar_mask = config['polar_mask']
         self.frame_order = config['frame_order']
         
-        self.filter = config['preprocess']['filter']
-        self.threshold = config['preprocess']['threshold'] / 255.0
-        self.k_strong = config['preprocess']['k_strong']
-        
         sequences = self.processor.get_sequences(self.data_dir, self.dataset_prefix)
         self.sequences = self.get_sequences_split(sequences, split)
         self.seq_idx_range = {}
@@ -334,7 +540,7 @@ class OxfordDataset(Dataset):
             idx = idx.tolist()
         seq = self.get_seq_from_idx(idx)
         frame = os.path.join(self.data_dir, seq, 'radar', self.frames[idx])
-        timestamps, azimuths, _, polar = self.processor.load_radar(frame, self.filter, self.threshold, self.k_strong)
+        timestamps, azimuths, _, polar = self.processor.load_radar(frame)
         
         # Convert to cartesian
         data = self.processor.radar_polar_to_cartesian(azimuths, polar, self.config['radar_resolution'],

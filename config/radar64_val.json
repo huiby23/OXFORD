@@ -1,0 +1,82 @@
+{
+    "gpuid": "cuda:0",
+    "model": "Oxford_Radar",
+    
+    "max_epochs": 4,
+    "lr": 0.000025,
+    "max_iterations": 400000,
+    "augmentation": {
+        "rot_max": 0.26
+    },
+
+    "dataset": "oxford",
+    "dataset_prefix": "2019",
+    "data_dir": "/teams/ius_1663576043/hby/slam/wyc/OXFORD_hero/dataset/dataset_sum/",
+    "log_dir": "/teams/ius_1663576043/hby/slam/wyc/OXFORD_test/logs/log64/",
+    "train_split": [0, 1, 3, 4, 5, 7, 9, 11, 12, 13, 14, 15, 16, 18, 19, 21, 22, 23, 26, 27, 28, 29, 30, 31],
+    "validation_split": [25],
+    "test_split": [14, 15, 16, 17, 18, 19, 20], 
+    "frame_order": 0, 
+    
+    "radar_resolution": 0.0432,
+    "cart_resolution": 0.2592,
+    "cart_pixel_width": 640,
+    "polar_mask": true,
+
+    
+    "batch_size": 2,
+    "window_size": 2,
+    "num_workers": 4,
+    "loss_t": 1,
+    "loss_alpha": 10,
+    "loss_beta": 1,
+    "loss_m": 1,
+    "loss_s_ent": 0.01,
+    "dist_loss_temp": 5,
+    "dist_loss_thred": 480,
+    "loss_multi": true,
+    "loss_score_reg": false,
+
+    "networks": {
+        "unet": {
+            "bilinear": true,
+            "first_feature_dimension": 8,
+            "score_sigmoid": true,
+            "descriptor_relu": false
+        },
+        "keypoint_block": {
+            "patch_size": 32
+        },
+        "matcher_block": {
+            "softmax_temp": 0.01,
+            "sparse": false
+        },
+        "svd_block": {
+            "linalg_svd": true,
+            "weight_nms": 0.01,
+            
+            "dist_filter": true,
+            "pixel_distance_threshold": 480,
+            "dist_temp": 5
+        }
+    },
+
+
+    "preprocess": {
+        "filter": false,
+        "threshold": 25,
+        "k_strong": 700
+    },
+
+
+    "print_rate": 10,
+    "log_rate": 10,
+    "backup_rate": 500,
+    "save_rate": 500,
+    "val_rate": 500,
+    
+    "vis_num": 5,
+    "vis_keypoint_nms": 0.001,
+
+    "compare_yeti": false
+}
